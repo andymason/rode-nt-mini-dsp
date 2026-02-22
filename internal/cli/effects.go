@@ -28,6 +28,8 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 		disable := fs.Bool("disable", false, "Disable "+effDef.Name+" effect")
 		cfgPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
 		debug := fs.Bool("debug", false, "Enable debug output")
+		quiet := fs.Bool("quiet", false, "Suppress progress output (errors still go to stderr)")
+		fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
 
 		// Register a float64 flag for every parameter, keyed by lowercase name.
 		paramPtrs := make(map[string]*float64, len(effDef.Params))
@@ -45,10 +47,10 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 		set := make(map[string]bool)
 		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
-		// Require at least one meaningful flag (not just --config/--debug).
+		// Require at least one meaningful flag (not just --config/--debug/--quiet).
 		actionSet := false
 		for name := range set {
-			if name != "config" && name != "debug" {
+			if name != "config" && name != "debug" && name != "quiet" && name != "q" {
 				actionSet = true
 				break
 			}
@@ -64,6 +66,7 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 			ctx.ConfigPath = *cfgPath
 		}
 		ctx.Debug = *debug
+		ctx.Quiet = *quiet
 		ctx.Device.SetDebug(*debug)
 
 		if err := ctx.LoadConfig(); err != nil {
@@ -98,7 +101,7 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 
 		// Send updates to the device when it is connected.
 		if err := ctx.EnsureDeviceConnected(); err == nil {
-			fmt.Print("Sending updates to device... ")
+			ctx.Printf("Sending updates to device... ")
 
 			if *enable || *disable {
 				packet := protocol.BuildEnablePacket(effID, ctx.State.IsEnabled(effID))
@@ -120,9 +123,9 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 			}
 
 			ctx.Device.Flush()
-			fmt.Println("OK")
+			ctx.Println("OK")
 		} else {
-			fmt.Println("Device not connected. Configuration saved.")
+			ctx.Println("Device not connected. Configuration saved.")
 		}
 
 		// Print the updated state for this effect.
@@ -130,11 +133,11 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 		if ctx.State.IsEnabled(effID) {
 			enabledStr = "ENABLED"
 		}
-		fmt.Printf("\nUpdated %s state:\n", effDef.Name)
-		fmt.Printf("  %s: %s\n", effDef.Name, enabledStr)
+		ctx.Printf("\nUpdated %s state:\n", effDef.Name)
+		ctx.Printf("  %s: %s\n", effDef.Name, enabledStr)
 		for _, p := range effDef.Params {
 			if val, ok := ctx.State.GetParam(effID, p.ParamID); ok {
-				fmt.Printf("    %-14s %s\n", p.Name+":", p.FormatFn(val))
+				ctx.Printf("    %-14s %s\n", p.Name+":", p.FormatFn(val))
 			}
 		}
 

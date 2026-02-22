@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -22,6 +23,8 @@ func guiCommand(args []string) error {
 	openBrowser := fs.Bool("open", true, "Open browser automatically")
 	configPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
 	debug := fs.Bool("debug", false, "Enable debug output")
+	quiet := fs.Bool("quiet", false, "Suppress log output (useful when running as a systemd service)")
+	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -36,9 +39,15 @@ func guiCommand(args []string) error {
 		ctx.ConfigPath = *configPath
 	}
 
-	// Set debug mode
+	// Set debug / quiet mode
 	ctx.Debug = *debug
+	ctx.Quiet = *quiet
 	ctx.Device.SetDebug(*debug)
+
+	// Suppress log output in quiet mode
+	if *quiet {
+		log.SetOutput(io.Discard)
+	}
 
 	// Load configuration
 	if err := ctx.LoadConfig(); err != nil {

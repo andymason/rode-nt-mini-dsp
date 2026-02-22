@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"rode-dsp/internal/cli"
+	"rode-dsp/internal/hid"
 )
 
 func main() {
@@ -32,6 +34,13 @@ func main() {
 	// Dispatch to appropriate command
 	if err := cli.Dispatch(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Exit 2 when the device is not found so shell scripts can distinguish
+		// "microphone not plugged in" from other failures:
+		//   if rode-dsp load --quiet; then …
+		//   elif [ $? -eq 2 ]; then echo "mic not connected, skipping"; fi
+		if errors.Is(err, hid.ErrDeviceNotFound) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }
