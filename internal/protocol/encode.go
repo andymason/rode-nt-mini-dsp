@@ -118,7 +118,7 @@ func EncodeCompThreshold(db float64) []byte {
 	if frac > 1.0 {
 		frac = 1.0
 	}
-	val := InterpolateSequentialLUT(COMP_THRESHOLD_LUT, frac)
+	val := InterpolateSequentialLUT(CompThresholdLUT, frac)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, val)
 	return buf
@@ -146,7 +146,7 @@ func EncodeCompAttack(ms float64) []byte {
 	if frac > 1.0 {
 		frac = 1.0
 	}
-	val := InterpolateSequentialLUT(COMP_ATTACK_LUT, frac)
+	val := InterpolateSequentialLUT(CompAttackLUT, frac)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, val)
 	return buf
@@ -162,7 +162,7 @@ func EncodeCompRelease(ms float64) []byte {
 	if frac > 1.0 {
 		frac = 1.0
 	}
-	val := InterpolateSequentialLUT(COMP_RELEASE_LUT, frac)
+	val := InterpolateSequentialLUT(CompReleaseLUT, frac)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, val)
 	return buf
@@ -177,7 +177,7 @@ func EncodeCompGain(db float64) []byte {
 	if frac > 1.0 {
 		frac = 1.0
 	}
-	val := InterpolateSequentialLUT(COMP_GAIN_LUT, frac)
+	val := InterpolateSequentialLUT(CompGainLUT, frac)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, val)
 	return buf
@@ -192,7 +192,7 @@ func EncodeAEHarmonics(pct float64) []byte {
 	if idx > 255 {
 		idx = 255
 	}
-	lutVal := InterpolateIndexedLUT(HARMONICS_DRIVE_LUT, idx)
+	lutVal := InterpolateIndexedLUT(HarmonicsDriveLUT, idx)
 	buf := make([]byte, 5)
 	binary.LittleEndian.PutUint32(buf[:4], lutVal)
 	buf[4] = byte(idx)
@@ -225,7 +225,7 @@ func EncodeBBDrive(pct float64) []byte {
 	if idx > 255 {
 		idx = 255
 	}
-	lutVal := InterpolateIndexedLUT(HARMONICS_DRIVE_LUT, idx)
+	lutVal := InterpolateIndexedLUT(HarmonicsDriveLUT, idx)
 	buf := make([]byte, 5)
 	binary.LittleEndian.PutUint32(buf[:4], lutVal)
 	buf[4] = byte(idx)

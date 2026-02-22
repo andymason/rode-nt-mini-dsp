@@ -1,6 +1,5 @@
 package protocol
 
-
 // LUTEntry represents a lookup table entry with index and value
 type LUTEntry struct {
 	Idx int
@@ -14,8 +13,8 @@ type AETuneEntry struct {
 	Val2 uint32
 }
 
-// COMP_THRESHOLD_LUT - Compressor threshold lookup table (57 entries)
-var COMP_THRESHOLD_LUT = []LUTEntry{
+// CompThresholdLUT is the compressor threshold lookup table (57 entries)
+var CompThresholdLUT = []LUTEntry{
 	{0, 1986723840}, {1, 1846083584}, {2, 1761542144}, {3, 1646198784},
 	{4, 1479475200}, {5, 1337851904}, {6, 1215823872}, {7, 1109458944},
 	{8, 1051852800}, {9, 964755456}, {10, 932642816}, {11, 858324992},
@@ -33,8 +32,8 @@ var COMP_THRESHOLD_LUT = []LUTEntry{
 	{56, 0},
 }
 
-// COMP_ATTACK_LUT - Compressor attack time lookup table (69 entries)
-var COMP_ATTACK_LUT = []LUTEntry{
+// CompAttackLUT is the compressor attack time lookup table (69 entries)
+var CompAttackLUT = []LUTEntry{
 	{0, 101728256}, {1, 96062668}, {2, 92603678}, {3, 86460989},
 	{4, 80139386}, {5, 77675888}, {6, 70982696}, {7, 64867532},
 	{8, 61289267}, {9, 55816355}, {10, 52563804}, {11, 41333555},
@@ -55,8 +54,8 @@ var COMP_ATTACK_LUT = []LUTEntry{
 	{68, 73400},
 }
 
-// COMP_RELEASE_LUT - Compressor release time lookup table (88 entries)
-var COMP_RELEASE_LUT = []LUTEntry{
+// CompReleaseLUT is the compressor release time lookup table (88 entries)
+var CompReleaseLUT = []LUTEntry{
 	{0, 1849684}, {1, 1748042}, {2, 1683422}, {3, 1590937},
 	{4, 1532124}, {5, 1447989}, {6, 1394480}, {7, 1317908},
 	{8, 1269237}, {9, 1199564}, {10, 1133744}, {11, 1091883},
@@ -81,8 +80,8 @@ var COMP_RELEASE_LUT = []LUTEntry{
 	{84, 22722}, {85, 22059}, {86, 21109}, {87, 20195},
 }
 
-// COMP_GAIN_LUT - Compressor gain lookup table (40 entries)
-var COMP_GAIN_LUT = []LUTEntry{
+// CompGainLUT is the compressor gain lookup table (40 entries)
+var CompGainLUT = []LUTEntry{
 	{0, 36842229}, {1, 115131967}, {2, 154717606}, {3, 180487410},
 	{4, 232027018}, {5, 262950782}, {6, 290133630}, {7, 331157010},
 	{8, 348738459}, {9, 360459425}, {10, 389761839}, {11, 407343288},
@@ -95,8 +94,8 @@ var COMP_GAIN_LUT = []LUTEntry{
 	{36, 1614130314}, {37, 1744546996}, {38, 1828728355}, {39, 1961013347},
 }
 
-// HARMONICS_DRIVE_LUT - Shared LUT for Aural Exciter harmonics and Big Bottom drive (75 entries)
-var HARMONICS_DRIVE_LUT = []LUTEntry{
+// HarmonicsDriveLUT is the shared LUT for Aural Exciter harmonics and Big Bottom drive (75 entries)
+var HarmonicsDriveLUT = []LUTEntry{
 	{2, 0x00100000}, {5, 0x0069CA00}, {7, 0x0097B100}, {10, 0x00DD3E00},
 	{12, 0x010C1600}, {15, 0x01531400}, {17, 0x01826E00}, {20, 0x01CB6400},
 	{22, 0x01FC3C00}, {25, 0x02464B00}, {28, 0x02915200}, {30, 0x02C3E500},
@@ -122,8 +121,8 @@ var HARMONICS_DRIVE_LUT = []LUTEntry{
 	{247, 0x4D3E5600}, {252, 0x63207E00}, {255, 0x7FFFFFFF},
 }
 
-// AE_TUNE_LUT - Aural Exciter tune lookup table with two values per entry (62 entries)
-var AE_TUNE_LUT = []AETuneEntry{
+// AETuneLUT is the Aural Exciter tune lookup table with two values per entry (62 entries)
+var AETuneLUT = []AETuneEntry{
 	{0, 0x0B000000, 0x24000000}, {1, 0x0B1B6DB6, 0x24000000},
 	{2, 0x0B36DB6D, 0x24000000}, {3, 0x0B524924, 0x24000000},
 	{4, 0x0B6DB6DB, 0x24000000}, {6, 0x0BA49249, 0x24000000},
@@ -157,8 +156,8 @@ var AE_TUNE_LUT = []AETuneEntry{
 	{239, 0x53B9611A, 0x6D3DCB08}, {255, 0x54000000, 0x7FFFFFFF},
 }
 
-// LerpInt linearly interpolates between two integers
-func LerpInt(v0, v1 int, t float64) int {
+// lerpInt linearly interpolates between two integers
+func lerpInt(v0, v1 int, t float64) int {
 	return int(float64(v0) + float64(v1-v0)*t)
 }
 
@@ -179,7 +178,7 @@ func InterpolateIndexedLUT(lut []LUTEntry, idx int) uint32 {
 				return v0
 			}
 			t := float64(idx-i0) / float64(i1-i0)
-			return uint32(LerpInt(int(v0), int(v1), t))
+			return uint32(lerpInt(int(v0), int(v1), t))
 		}
 	}
 	return lut[len(lut)-1].Val
@@ -205,30 +204,30 @@ func InterpolateSequentialLUT(lut []LUTEntry, frac float64) uint32 {
 	if i1 > i0 {
 		t = (pos - i0) / (i1 - i0)
 	}
-	return uint32(LerpInt(int(lut[lo].Val), int(lut[hi].Val), t))
+	return uint32(lerpInt(int(lut[lo].Val), int(lut[hi].Val), t))
 }
 
 // InterpolateAETune interpolates in the AE tune LUT
 func InterpolateAETune(idx int) (uint32, uint32) {
-	if idx <= AE_TUNE_LUT[0].Idx {
-		return AE_TUNE_LUT[0].Val1, AE_TUNE_LUT[0].Val2
+	if idx <= AETuneLUT[0].Idx {
+		return AETuneLUT[0].Val1, AETuneLUT[0].Val2
 	}
-	if idx >= AE_TUNE_LUT[len(AE_TUNE_LUT)-1].Idx {
-		return AE_TUNE_LUT[len(AE_TUNE_LUT)-1].Val1, AE_TUNE_LUT[len(AE_TUNE_LUT)-1].Val2
+	if idx >= AETuneLUT[len(AETuneLUT)-1].Idx {
+		return AETuneLUT[len(AETuneLUT)-1].Val1, AETuneLUT[len(AETuneLUT)-1].Val2
 	}
 
-	for i := 0; i < len(AE_TUNE_LUT)-1; i++ {
-		i0, v1_0, v2_0 := AE_TUNE_LUT[i].Idx, AE_TUNE_LUT[i].Val1, AE_TUNE_LUT[i].Val2
-		i1, v1_1, v2_1 := AE_TUNE_LUT[i+1].Idx, AE_TUNE_LUT[i+1].Val1, AE_TUNE_LUT[i+1].Val2
+	for i := 0; i < len(AETuneLUT)-1; i++ {
+		i0, v1_0, v2_0 := AETuneLUT[i].Idx, AETuneLUT[i].Val1, AETuneLUT[i].Val2
+		i1, v1_1, v2_1 := AETuneLUT[i+1].Idx, AETuneLUT[i+1].Val1, AETuneLUT[i+1].Val2
 		if i0 <= idx && idx <= i1 {
 			if i0 == i1 {
 				return v1_0, v2_0
 			}
 			t := float64(idx-i0) / float64(i1-i0)
-			val1 := uint32(LerpInt(int(v1_0), int(v1_1), t))
-			val2 := uint32(LerpInt(int(v2_0), int(v2_1), t))
+			val1 := uint32(lerpInt(int(v1_0), int(v1_1), t))
+			val2 := uint32(lerpInt(int(v2_0), int(v2_1), t))
 			return val1, val2
 		}
 	}
-	return AE_TUNE_LUT[len(AE_TUNE_LUT)-1].Val1, AE_TUNE_LUT[len(AE_TUNE_LUT)-1].Val2
+	return AETuneLUT[len(AETuneLUT)-1].Val1, AETuneLUT[len(AETuneLUT)-1].Val2
 }
