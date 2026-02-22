@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RODE NT-USB Mini DSP Controller</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>RODE NT-USB Mini DSP Controller</h1>
+
+            <div class="audio-section">
+                <h3>Audio Monitoring</h3>
+                <div class="audio-controls">
+                    <span class="audio-label">MIC</span>
+                    <button class="btn" disabled>Start</button>
+                    <button class="btn" disabled>Stop</button>
+                    <div class="vu-meter">
+                        <div class="vu-bar"></div>
+                        <div class="vu-label">-∞ dB</div>
+                    </div>
+                </div>
+                <p class="audio-note">Audio: browser Web Audio API only, no data sent to server.</p>
+            </div>
+
+            <div class="connection-status">
+                <div class="status-dot disconnected"></div>
+                <span class="status-text">DISCONNECTED</span>
+                <button id="connect-btn" class="btn">Connect</button>
+            </div>
+        </header>
+
+        <main>
+
+
+
+
+            <div class="effects-grid">
+                <div class="effect-panel-wrapper">
+                      <div class="viz-panel">
+                    <h3>
+                        Compressor
+                        Transfer Curve
+                    </h3>
+                    <canvas id="comp-viz" width="400" height="200"></canvas>
+                    <p class="viz-desc">
+                        Transfer curve with current-level dot showing
+                        compression ratio
+                    </p>
+                </div>
+                <!-- Compressor Panel -->
+                <div class="effect-panel">
+                    <div class="effect-header">
+                        <h3>
+                            Compressor
+                        </h3>
+                        <button class="btn reset" disabled>
+                            Reset
+                        </button>
+                        <label class="toggle">
+                            <input type="checkbox" disabled />
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="effect-params">
+                        <div class="param">
+                            <label>Threshold:
+                                <div class="hex">Hex: 0x07370000</div> <span class="value">-20.0 dB</span>
+                            </label>
+                            <input type="range" min="-60" max="0" step="0.5" value="-20" disabled />
+
+                        </div>
+                        <div class="param">
+                            <label>Ratio:
+                                <div class="hex">Hex: 0x80</div> <span class="value">3.0:1</span>
+                            </label>
+                            <input type="range" min="1.5" max="4.5" step="0.1" value="3.0" disabled />
+
+                        </div>
+                        <div class="param">
+                            <label>Attack:
+                                <div class="hex">Hex: 0x005C30A3</div>
+                                <span class="value">0.70 ms</span>
+                            </label>
+                            <input type="range" min="0" max="1000" step="1" value="423" data-scale="log"
+                                data-param-min="0.1" data-param-max="10" disabled />
+
+                        </div>
+                        <div class="param">
+                            <label>Release:
+                                <div class="hex">Hex: 0x000493F0</div>
+                                <span class="value">21.0 ms</span>
+                            </label>
+                            <input type="range" min="0" max="1000" step="1" value="389" data-scale="log"
+                                data-param-min="5" data-param-max="200" disabled />
+
+                        </div>
+                        <div class="param">
+                            <label>Gain:
+                                <div class="hex">Hex: 0x114B167E</div>
+                                <span class="value">2.0 dB</span>
+                            </label>
+                            <input type="range" min="0" max="9" step="0.1" value="2.0" disabled />
+
+                        </div>
+
+                    </div>
+                </div>
+                </div>
+
+                <!-- Noise Gate Panel -->
+                <div class="effect-panel-wrapper">
+                    <div class="viz-panel">
+                        <h3>
+                            Gate Visualization
+                        </h3>
+                        <canvas id="gate-viz" width="400" height="200"></canvas>
+                        <p class="viz-desc">
+                            Waveform bars (green=open, grey=closed) with
+                            threshold + hysteresis lines
+                        </p>
+                    </div>
+                    <div class="effect-panel">
+                        <div class="effect-header">
+                            <h3>
+                                Noise Gate
+                            </h3>
+                            <button class="btn reset" disabled>
+                                Reset
+                            </button>
+                            <label class="toggle">
+                                <input type="checkbox" disabled />
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="effect-params">
+                            <div class="param">
+                                <label>Threshold:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">-42.0 dB</span>
+                                </label>
+                                <input type="range" min="-60" max="0" step="0.5" value="-42" disabled />
+
+                            </div>
+                            <div class="param">
+                                <label>Attack:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">0.80 ms</span>
+                                </label>
+                                <input type="range" min="0" max="1000" step="1" value="226" data-scale="log"
+                                    data-param-min="0.1" data-param-max="1000" disabled />
+
+                            </div>
+                            <div class="param">
+                                <label>Hold:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">80.0 ms</span>
+                                </label>
+                                <input type="range" min="0" max="1000" step="1" value="127" data-scale="log"
+                                    data-param-min="50" data-param-max="2000" disabled />
+
+                            </div>
+                            <div class="param">
+                                <label>Release:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">210.0 ms</span>
+                                </label>
+                                <input type="range" min="0" max="1000" step="1" value="389" data-scale="log"
+                                    data-param-min="50" data-param-max="2000" disabled />
+
+                            </div>
+                            <div class="param">
+                                <label>Range:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">-9.0 dB</span>
+                                </label>
+                                <input type="range" min="0" max="1000" step="1" value="455" data-scale="neglog"
+                                    data-param-min="-100" data-param-negmax="0.5" disabled />
+
+                            </div>
+                            <div class="param">
+                                <label>Hysteresis:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">50%</span>
+                                </label>
+                                <input type="range" min="0" max="100" step="1" value="50" disabled />
+
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="effect-panel-wrapper">
+                    <div class="viz-panel">
+                        <h3>EQ Response</h3>
+                        <canvas id="eq-viz" width="400" height="200"></canvas>
+                        <p class="viz-desc">
+                            Gaussian frequency response combining Aural Exciter
+                            + Big Bottom
+                        </p>
+                    </div>
+
+                    <!-- Aural Exciter Panel -->
+                    <div class="effect-panel">
+                        <div class="effect-header">
+                            <h3>
+                                Aural Exciter
+                            </h3>
+                            <button class="btn reset" disabled>
+                                Reset
+                            </button>
+                            <label class="toggle">
+                                <input type="checkbox" disabled />
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="effect-params">
+                            <div class="param">
+                                <label>Harmonics:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">49.0%</span>
+                                </label>
+                                <input type="range" min="0" max="100" step="0.5" value="49" disabled />
+
+                            </div>
+                            <div class="param">
+                                <label>Tune:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">3516 Hz</span>
+                                </label>
+                                <input type="range" min="0" max="1000" step="1" value="834" data-scale="log"
+                                    data-param-min="600" data-param-max="5000" disabled />
+
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- Big Bottom Panel -->
+                    <div class="effect-panel">
+                        <div class="effect-header">
+                            <h3>Big Bottom</h3>
+                            <button class="btn reset" disabled>
+                                Reset
+                            </button>
+
+                            <label class="toggle">
+                                <input type="checkbox" disabled />
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="effect-params">
+                            <div class="param">
+                                <label>Drive:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">62.0%</span>
+                                </label>
+                                <input type="range" min="0" max="100" step="0.5" value="62" disabled />
+
+                            </div>
+                            <div class="param">
+                                <label>Tune:
+                                    <div class="hex">Hex: xxx</div>
+                                    <span class="value">131 Hz</span>
+                                </label>
+                                <input type="range" min="0" max="1000" step="1" value="474" data-scale="log"
+                                    data-param-min="60" data-param-max="312" disabled />
+
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </main>
+
+
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

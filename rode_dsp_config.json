@@ -1,0 +1,29 @@
+{
+  "aural_exciter": {
+    "enabled": false,
+    "harmonics": 49,
+    "tune": 3516
+  },
+  "big_bottom": {
+    "drive": 95.5,
+    "enabled": false,
+    "tune": 131
+  },
+  "compressor": {
+    "attack": 0.7,
+    "enabled": true,
+    "gain": 2,
+    "ratio": 3,
+    "release": 21,
+    "threshold": -25
+  },
+  "noise_gate": {
+    "attack": 0.8,
+    "enabled": true,
+    "hold": 80,
+    "hysteresis": 53,
+    "range": -29.5,
+    "release": 210,
+    "threshold": -42
+  }
+}

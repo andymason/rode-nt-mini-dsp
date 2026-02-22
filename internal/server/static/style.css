@@ -1,0 +1,448 @@
+/* RODE NT-USB Mini DSP Controller — compact technical UI */
+
+:root {
+    --bg0:     #161616;
+    --bg1:     #1e1e1e;
+    --bg2:     #252525;
+    --bg3:     #2d2d2d;
+    --border:  #363636;
+    --border2: #444;
+    --accent:  #aaff00;
+    --accent2: #bbff33;
+    --text:    #c8c8c8;
+    --dim:     #666;
+    --bright:  #eee;
+    --red:     #e05050;
+    --green:   #4caf50;
+    --orange:  #ff9800;
+    --mono: 'Consolas', 'Monaco', 'Lucida Console', monospace;
+    --sans: 'Segoe UI', system-ui, sans-serif;
+    --r: 2px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: var(--sans);
+    font-size: 13px;
+    background: var(--bg0);
+    color: var(--text);
+    line-height: 1.4;
+}
+
+.container {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 4px 6px 6px;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 0 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 5px;
+}
+
+header h1 {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--bright);
+    white-space: nowrap;
+    letter-spacing: -0.3px;
+    flex-shrink: 0;
+}
+
+/* ── Audio monitor — inline compact strip ───────────────── */
+.audio-section {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 3px 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.audio-section h3 { display: none; }  /* title removed — no space */
+
+.audio-note { display: none; }        /* tooltip only if needed */
+
+.audio-controls {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+    min-width: 0;
+}
+
+.audio-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+}
+
+.vu-meter {
+    flex: 1;
+    height: 8px;
+    background: var(--bg0);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid var(--border);
+    min-width: 60px;
+}
+
+.vu-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #2196F3 0%, #4CAF50 50%, #FF9800 80%, #F44336 100%);
+    transition: width 0.08s linear;
+}
+
+.vu-label {
+    position: absolute;
+    top: 0; right: 4px; bottom: 0;
+    display: flex;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 0 3px #000;
+    pointer-events: none;
+}
+
+/* ── Buttons ─────────────────────────────────────────────── */
+.btn {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    padding: 4px 10px;
+    border-radius: var(--r);
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--sans);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.btn:hover:not(:disabled) { background: var(--accent2); }
+
+.btn:disabled {
+    background: #333;
+    color: #555;
+    cursor: not-allowed;
+}
+
+.btn.reset {
+    background: transparent;
+    color: var(--dim);
+    border: 1px solid var(--border2);
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.btn.reset:hover:not(:disabled) {
+    background: var(--bg3);
+    color: var(--text);
+}
+
+/* ── Connection status ───────────────────────────────────── */
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 3px 8px;
+    flex-shrink: 0;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.status-dot.connected    { background: var(--green);  box-shadow: 0 0 6px var(--green); }
+.status-dot.disconnected { background: var(--red);    box-shadow: 0 0 6px var(--red); }
+.status-dot.loading      { background: var(--orange); animation: pulse 1s infinite; }
+
+.status-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--text);
+}
+
+/* ── Effects grid ────────────────────────────────────────── */
+.effects-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 5px;
+}
+
+.effect-panel-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+/* ── Viz panels ──────────────────────────────────────────── */
+.viz-panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    overflow: hidden;
+}
+
+.viz-panel h3 {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+.viz-panel canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: #0d0d0d;
+    image-rendering: pixelated;
+}
+
+.viz-desc { display: none; }  /* removed — info is already in canvas */
+
+/* ── Effect panels ───────────────────────────────────────── */
+.effect-panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    overflow: visible;
+}
+
+.effect-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+}
+
+.effect-header h3 {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--bright);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    flex: 1;
+}
+
+.effect-params {
+    padding: 5px 8px 4px;
+    overflow: visible;
+}
+
+/* ── Parameter rows ──────────────────────────────────────── */
+.param {
+    margin-bottom: 3px;
+}
+
+.param label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 2px;
+    font-size: 12px;
+    color: var(--text);
+}
+
+.param label > *:first-child { /* label text node — no direct style */ }
+
+.hex {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: #484848;
+    flex: 1;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.param .value {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    white-space: nowrap;
+    min-width: 62px;
+    text-align: right;
+}
+
+/* ── Range sliders ───────────────────────────────────────── */
+.param input[type="range"] {
+    width: 100%;
+    height: 3px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #3a3a3a;
+    outline: none;
+    border-radius: 2px;
+    cursor: pointer;
+    display: block;
+    margin: 6px 0;
+}
+
+.param input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid var(--bg2);
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+.param input[type="range"]::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid var(--bg2);
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+.param input[type="range"]::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 2px;
+}
+
+.param input[type="range"]:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.param input[type="range"]:disabled::-webkit-slider-thumb { cursor: not-allowed; }
+.param input[type="range"]:disabled::-moz-range-thumb    { cursor: not-allowed; }
+
+/* ── Toggle switch ───────────────────────────────────────── */
+.toggle {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.toggle input { opacity: 0; width: 0; height: 0; }
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: #444;
+    border-radius: 18px;
+    transition: background 0.2s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 12px;
+    width: 12px;
+    left: 3px;
+    top: 3px;
+    background: #888;
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+}
+
+input:checked + .slider               { background: var(--accent); }
+input:checked + .slider:before        { transform: translateX(18px); background: #000; }
+input:disabled + .slider              { cursor: not-allowed; opacity: 0.4; }
+
+/* ── Notice / CLI help ───────────────────────────────────── */
+.notice {
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 6px 8px;
+    margin-top: 5px;
+    background: var(--bg1);
+}
+
+.notice h2 {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.notice p {
+    font-size: 11px;
+    color: #444;
+    margin-bottom: 3px;
+}
+
+.notice pre {
+    background: var(--bg0);
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--accent);
+    padding: 6px 8px;
+    border-radius: var(--r);
+    overflow-x: auto;
+    margin: 4px 0;
+}
+
+.notice code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: #666;
+}
+
+/* ── Animations ──────────────────────────────────────────── */
+@keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50%       { opacity: 1; }
+}
+
+/* ── Responsive ──────────────────────────────────────────── */
+@media (max-width: 1100px) {
+    .effects-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 700px) {
+    .effects-grid { grid-template-columns: 1fr; }
+
+    header {
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+
+    .audio-section { order: 3; flex-basis: 100%; }
+}
