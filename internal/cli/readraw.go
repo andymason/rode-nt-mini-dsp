@@ -14,6 +14,8 @@ func readrawCommand(args []string) error {
 	count := fs.Int("count", 1, "Number of packets to read (0 for infinite)")
 	configPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
 	debug := fs.Bool("debug", false, "Enable debug output")
+	quiet := fs.Bool("quiet", false, "Suppress progress output (errors still go to stderr)")
+	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -33,13 +35,14 @@ func readrawCommand(args []string) error {
 		ctx.ConfigPath = *configPath
 	}
 
-	// Set debug mode
+	// Set debug / quiet mode
 	ctx.Debug = *debug
+	ctx.Quiet = *quiet
 	ctx.Device.SetDebug(*debug)
 
 	// Load configuration (though not strictly needed for read-raw)
 	if err := ctx.LoadConfig(); err != nil {
-		fmt.Printf("Note: Failed to load config: %v\n", err)
+		ctx.Printf("Note: Failed to load config: %v\n", err)
 	}
 
 	// Ensure device is connected

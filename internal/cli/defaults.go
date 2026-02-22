@@ -12,6 +12,8 @@ func defaultsCommand(args []string) error {
 	configPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
 	sendToDevice := fs.Bool("send", false, "Send defaults to device (requires connection)")
 	debug := fs.Bool("debug", false, "Enable debug output")
+	quiet := fs.Bool("quiet", false, "Suppress progress output (errors still go to stderr)")
+	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -26,27 +28,28 @@ func defaultsCommand(args []string) error {
 		ctx.ConfigPath = *configPath
 	}
 
-	// Set debug mode
+	// Set debug / quiet mode
 	ctx.Debug = *debug
+	ctx.Quiet = *quiet
 	ctx.Device.SetDebug(*debug)
 
 	// Load current config (if it exists)
 	if err := ctx.LoadConfig(); err != nil {
-		fmt.Printf("Warning: Failed to load config: %v\n", err)
+		ctx.Printf("Warning: Failed to load config: %v\n", err)
 	}
 
 	// Reset to defaults
-	fmt.Print("Resetting all parameters to defaults... ")
+	ctx.Printf("Resetting all parameters to defaults... ")
 	ctx.State.ResetToDefaults()
-	fmt.Println("OK")
+	ctx.Println("OK")
 
 	// Save config
-	fmt.Printf("Saving configuration to %s... ", ctx.ConfigPath)
+	ctx.Printf("Saving configuration to %s... ", ctx.ConfigPath)
 	if err := ctx.SaveConfig(); err != nil {
-		fmt.Println("FAILED")
+		ctx.Println("FAILED")
 		return fmt.Errorf("failed to save config: %w", err)
 	}
-	fmt.Println("OK")
+	ctx.Println("OK")
 
 	// Optionally send to device
 	if *sendToDevice {
@@ -56,27 +59,27 @@ func defaultsCommand(args []string) error {
 		}
 
 		// Send initialization packets
-		fmt.Print("Sending initialization packets... ")
+		ctx.Printf("Sending initialization packets... ")
 		if err := ctx.Device.SendInit(); err != nil {
-			fmt.Println("FAILED")
+			ctx.Println("FAILED")
 			return fmt.Errorf("failed to send init packets: %w", err)
 		}
-		fmt.Println("OK")
+		ctx.Println("OK")
 
 		// Send all parameters (including disabled state)
-		fmt.Print("Sending default parameters... ")
+		ctx.Printf("Sending default parameters... ")
 		if err := ctx.Device.SendAllParams(ctx.State); err != nil {
-			fmt.Println("FAILED")
+			ctx.Println("FAILED")
 			return fmt.Errorf("failed to send parameters: %w", err)
 		}
-		fmt.Println("OK")
+		ctx.Println("OK")
 
-		fmt.Println("\nDefaults sent to device.")
+		ctx.Println("\nDefaults sent to device.")
 	}
 
 	// Show new state
-	fmt.Println("\nNew default state:")
-	fmt.Print(ctx.State.String())
+	ctx.Println("\nNew default state:")
+	ctx.Printf("%s", ctx.State.String())
 
 	return nil
 }

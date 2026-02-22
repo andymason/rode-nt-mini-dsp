@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"time"
 
 	"rode-dsp/internal/dsp"
 )
@@ -13,6 +14,9 @@ func loadCommand(args []string) error {
 	fs := flag.NewFlagSet("load", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
 	debug := fs.Bool("debug", false, "Enable debug output")
+	quiet := fs.Bool("quiet", false, "Suppress progress output (errors still go to stderr)")
+	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
+	wait := fs.Int("wait", 0, "Seconds to wait for device to appear (useful in boot scripts)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -26,6 +30,7 @@ func loadCommand(args []string) error {
 		ctx.ConfigPath = *configPath
 	}
 	ctx.Debug = *debug
+	ctx.Quiet = *quiet
 	ctx.Device.SetDebug(*debug)
 
 	// Check config exists
@@ -38,37 +43,38 @@ func loadCommand(args []string) error {
 	}
 
 	// Load configuration
-	fmt.Printf("Loading config from %s...\n", ctx.ConfigPath)
+	ctx.Printf("Loading config from %s...\n", ctx.ConfigPath)
 	if err := ctx.LoadConfig(); err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Connect to device
-	fmt.Print("Connecting to device... ")
-	if err := ctx.EnsureDeviceConnected(); err != nil {
-		fmt.Println("FAILED")
+	// Connect to device (with optional retry wait for boot scripts)
+	ctx.Printf("Connecting to device... ")
+	waitDur := time.Duration(*wait) * time.Second
+	if err := ctx.EnsureDeviceConnectedWithWait(waitDur); err != nil {
+		ctx.Println("FAILED")
 		return fmt.Errorf("device not found: %w", err)
 	}
-	fmt.Println("OK")
+	ctx.Println("OK")
 
 	// Send init/reset sequence
-	fmt.Print("Sending INIT sequence... ")
+	ctx.Printf("Sending INIT sequence... ")
 	if err := ctx.Device.SendInit(); err != nil {
-		fmt.Println("FAILED")
+		ctx.Println("FAILED")
 		return fmt.Errorf("INIT sequence failed: %w", err)
 	}
-	fmt.Println("OK")
+	ctx.Println("OK")
 
 	// Push all parameters and enable states to device
-	fmt.Print("Applying config to device... ")
+	ctx.Printf("Applying config to device... ")
 	if err := ctx.Device.SendAllParams(ctx.State); err != nil {
-		fmt.Println("FAILED")
+		ctx.Println("FAILED")
 		return fmt.Errorf("failed to send parameters: %w", err)
 	}
-	fmt.Println("OK")
+	ctx.Println("OK")
 
-	fmt.Println("\nApplied settings:")
-	fmt.Print(ctx.State.String())
+	ctx.Println("\nApplied settings:")
+	ctx.Printf("%s", ctx.State.String())
 
 	return nil
 }

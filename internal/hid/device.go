@@ -11,18 +11,23 @@ import (
 	"rode-dsp/internal/protocol"
 )
 
+// ErrDeviceNotFound is returned when the RODE NT-USB Mini is not detected on USB.
+// Scripts can use this to distinguish a missing device from other failures
+// (e.g. check for exit code 2 in shell scripts).
+var ErrDeviceNotFound = errors.New("RODE NT-USB Mini not found")
+
 // Device manages USB HID communication with the RODE NT-USB Mini
 type Device struct {
-	mu          sync.RWMutex
-	device      *gohid.Device
-	connected   bool
-	sendQueue   chan [protocol.PacketSize]byte
-	ackChan     chan bool
-	done        chan struct{}
-	readDone    chan struct{}
-	workerDone  chan struct{}
-	debug       bool
-	initOnce    sync.Once
+	mu         sync.RWMutex
+	device     *gohid.Device
+	connected  bool
+	sendQueue  chan [protocol.PacketSize]byte
+	ackChan    chan bool
+	done       chan struct{}
+	readDone   chan struct{}
+	workerDone chan struct{}
+	debug      bool
+	initOnce   sync.Once
 }
 
 // NewDevice creates a new Device instance
@@ -77,7 +82,7 @@ func (d *Device) Connect() error {
 	}
 
 	if deviceCount == 0 {
-		return fmt.Errorf("no HID device found with VID %04x PID %04x", protocol.VID, protocol.PID)
+		return fmt.Errorf("%w (VID %04x PID %04x)", ErrDeviceNotFound, protocol.VID, protocol.PID)
 	}
 
 	// Open the first matching device

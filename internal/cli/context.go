@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"rode-dsp/internal/dsp"
 	"rode-dsp/internal/hid"
@@ -18,6 +21,10 @@ type Context struct {
 
 	// Debug enables debug output
 	Debug bool
+
+	// Quiet suppresses progress output to stdout. Errors are still written to
+	// stderr. Use this in boot scripts or cron jobs where stdout is redirected.
+	Quiet bool
 
 	// State holds the current DSP parameter state
 	State *dsp.DSPState
@@ -47,7 +54,23 @@ func NewContext() *Context {
 		Device:     hid.NewDevice(),
 		ConfigPath: configPath,
 		Debug:      false,
+		Quiet:      false,
 		State:      dsp.NewDSPState(),
+	}
+}
+
+// Printf prints a formatted message to stdout unless Quiet is set.
+// Use this for progress/status output within commands.
+func (c *Context) Printf(format string, args ...interface{}) {
+	if !c.Quiet {
+		fmt.Printf(format, args...)
+	}
+}
+
+// Println prints a message to stdout unless Quiet is set.
+func (c *Context) Println(args ...interface{}) {
+	if !c.Quiet {
+		fmt.Println(args...)
 	}
 }
 
@@ -88,6 +111,41 @@ func (c *Context) SaveConfig() error {
 func (c *Context) EnsureDeviceConnected() error {
 	_, err := c.GetDevice()
 	return err
+}
+
+// EnsureDeviceConnectedWithWait tries to connect, retrying every second until
+// the device appears or the wait duration expires. Only hid.ErrDeviceNotFound
+// triggers a retry; other errors (e.g. permission denied) are returned
+// immediately. Pass wait=0 to skip retry logic entirely.
+//
+// This is the key flag for Linux boot scripts: the USB HID device may not be
+// enumerated by the kernel at the instant the script runs. A wait of 10–30 s
+// covers the typical desktop startup window.
+func (c *Context) EnsureDeviceConnectedWithWait(wait time.Duration) error {
+	if wait <= 0 {
+		return c.EnsureDeviceConnected()
+	}
+
+	deadline := time.Now().Add(wait)
+	for {
+		err := c.EnsureDeviceConnected()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, hid.ErrDeviceNotFound) {
+			// Non-retryable error (e.g. permission denied, HID init failure)
+			return err
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		if !c.Quiet {
+			fmt.Fprintf(os.Stderr, "Device not found, waiting...\n")
+		}
+		// Reset deviceInitialized so the next loop iteration retries Connect()
+		c.deviceInitialized = false
+		time.Sleep(time.Second)
+	}
 }
 
 // Close cleans up resources
