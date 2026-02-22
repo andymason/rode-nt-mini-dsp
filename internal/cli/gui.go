@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -89,13 +88,6 @@ func guiCommand(args []string) error {
 		return fmt.Errorf("server error: %w", err)
 	case <-interrupt:
 		log.Println("Shutting down server...")
-
-		// Create a context with timeout for graceful shutdown
-		_, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		// Note: The current server implementation doesn't have a Shutdown method
-		// We'll just exit gracefully and let defer handle cleanup
 		log.Println("Server stopped")
 	}
 

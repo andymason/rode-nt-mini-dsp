@@ -74,7 +74,7 @@ func readrawCommand(args []string) error {
 			fmt.Println()
 
 			// Try to interpret as a DSP packet
-			if len(data) >= 29 && data[0] == 0x03 || data[0] == 0x04 {
+			if len(data) >= 29 && (data[0] == 0x03 || data[0] == 0x04) {
 				fmt.Printf("  Looks like Report ID 0x%02x packet:\n", data[0])
 				if len(data) >= 4 {
 					fmt.Printf("    Effect: 0x%02x, Command: 0x%02x, Param: 0x%02x\n",
@@ -129,14 +129,6 @@ func readrawCommand(args []string) error {
 
 	fmt.Printf("Read %d packet(s)\n", packetsRead)
 	return nil
-}
-
-// Helper function to get minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // init registers the read-raw command

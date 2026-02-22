@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,14 +22,8 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		// Allow connections from localhost on any port
 		host := r.Host
-		if idx := len(host) - 1; idx >= 0 {
-			// Strip port to check just the hostname
-			for i := len(host) - 1; i >= 0; i-- {
-				if host[i] == ':' {
-					host = host[:i]
-					break
-				}
-			}
+		if i := strings.LastIndex(host, ":"); i >= 0 {
+			host = host[:i]
 		}
 		return host == "localhost" || host == "127.0.0.1"
 	},
@@ -36,17 +31,17 @@ var upgrader = websocket.Upgrader{
 
 // Message types for WebSocket communication
 const (
-	MsgTypeSetParam          = "set_param"
-	MsgTypeSetEnable         = "set_enable"
-	MsgTypeResetDefaults     = "reset_defaults"
-	MsgTypeGetState          = "get_state"
-	MsgTypeState             = "state"
-	MsgTypeParamUpdate       = "param_update"
-	MsgTypeConnectionStatus  = "connection_status"
-	MsgTypeError             = "error"
+	MsgTypeSetParam         = "set_param"
+	MsgTypeSetEnable        = "set_enable"
+	MsgTypeResetDefaults    = "reset_defaults"
+	MsgTypeGetState         = "get_state"
+	MsgTypeState            = "state"
+	MsgTypeParamUpdate      = "param_update"
+	MsgTypeConnectionStatus = "connection_status"
+	MsgTypeError            = "error"
 )
 
-// WebSocket message structure
+// WSMessage is the WebSocket message structure
 type WSMessage struct {
 	Type    string          `json:"type"`
 	Effect  *int            `json:"effect,omitempty"`
@@ -210,7 +205,9 @@ func (s *Server) stateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(stateJSON)
+	if _, err := w.Write(stateJSON); err != nil {
+		log.Printf("stateHandler: failed to write response: %v", err)
+	}
 }
 
 // readPump reads messages from the WebSocket connection
@@ -477,37 +474,7 @@ func (s *Server) sendError(client *Client, errorMsg string) {
 	}
 }
 
-// broadcastState sends the current state to all connected clients
-func (s *Server) broadcastState() {
-	stateJSON, err := json.Marshal(s.dspState)
-	if err != nil {
-		log.Printf("Failed to marshal state for broadcast: %v", err)
-		return
-	}
-
-	stateMsg := WSMessage{
-		Type:  MsgTypeState,
-		Value: stateJSON,
-	}
-
-	if msgJSON, err := json.Marshal(stateMsg); err == nil {
-		s.hub.broadcast <- msgJSON
-	}
-}
-
-// broadcastConnectionStatus sends device connection status to all clients
-func (s *Server) broadcastConnectionStatus(connected bool) {
-	statusMsg := WSMessage{
-		Type:    MsgTypeConnectionStatus,
-		Enabled: &connected,
-	}
-
-	if msgJSON, err := json.Marshal(statusMsg); err == nil {
-		s.hub.broadcast <- msgJSON
-	}
-}
-
-// Helper function to create int pointer
+// intPtr returns a pointer to an int value
 func intPtr(i int) *int {
 	return &i
 }
