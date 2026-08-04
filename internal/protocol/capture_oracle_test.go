@@ -11,7 +11,7 @@ import (
 //
 // It was written before the encoders were known exactly, to survive the LUT
 // replacement. That replacement has now happened, along with the transcription
-// of the real formulas out of RØDE Connect.exe (docs/re/08-encoders.md), and the
+// of the real formulas out of RØDE Connect.exe (docs/re/03-encoders.md), and the
 // outcome reorganised this file:
 //
 //   - Every capture taken at the TOP of a slider is reproduced exactly, as are
@@ -117,8 +117,8 @@ func TestTruncationMatchesCapturedIndices(t *testing.T) {
 // endpoint, rather than at random imprecision in a mouse drag.
 //
 // Closing this properly needs a fresh capture with each slider deliberately
-// parked at its minimum — Step 4 of docs/re/07-workplan.md, which needs the
-// microphone.
+// parked at its minimum, which needs the microphone. See the closing note in
+// docs/re/04-open-questions.md.
 func TestCaptureLabelsAreApproximate(t *testing.T) {
 	// Tolerances differ by how tightly the implied input is pinned:
 	//
@@ -162,7 +162,7 @@ func TestCaptureLabelsAreApproximate(t *testing.T) {
 		}
 		if le32(c.fn(c.labelled)) == c.captured {
 			t.Errorf("%s(%v) now reproduces the capture at its labelled value; "+
-				"move it into capturedVectors() and update docs/re/08-encoders.md",
+				"move it into capturedVectors() and update docs/re/03-encoders.md",
 				c.name, c.labelled)
 		}
 	}

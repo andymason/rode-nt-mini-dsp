@@ -11,12 +11,12 @@ import (
 // The seven DSP lookup tables, extracted from RØDE Connect.exe
 // (SHA-256 c3015816…1023c) and committed under luts/. Each is a contiguous
 // 256-entry block of little-endian uint32 in .rdata; see docs/re/06-static-extraction.md
-// for how they were located and docs/re/08-encoders.md for how they are indexed.
+// for how they were located and docs/re/03-encoders.md for how they are indexed.
 //
-// These replace the sparse capture-derived tables that used to live in lut.go,
-// which covered 40-91 of the 256 entries and interpolated between them. The
-// binary does no interpolation at all: it truncates a scaled float to an index
-// and reads one entry.
+// These replaced an earlier set reconstructed from USB captures, which covered
+// only 40-91 of the 256 entries and interpolated between them. The binary does
+// no interpolation at all: it truncates a scaled float to an index and reads one
+// entry.
 //
 //go:embed luts/*.hex
 var lutFS embed.FS

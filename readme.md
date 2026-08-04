@@ -36,20 +36,23 @@ fi
 
 ## Accuracy
 
-The parameter encodings were reverse engineered from RØDE Connect and verified
-against USB captures. Most are byte-exact; some are not yet:
+The encodings were read out of RØDE Connect's instruction stream rather than
+fitted to captures, and the device's seven lookup tables were extracted from the
+binary itself, so what this sends is what the official application sends.
 
-- **Noise gate threshold and range** are out by roughly 1.2 dB and 2.0 dB at the
-  bottom of their ranges.
-- **Compressor threshold, attack, release and gain** interpolate between
-  observed values rather than indexing the device's real lookup table, so
-  mid-range values are approximations.
-- **Noise gate attack, hold and release** use a reciprocal-linear approximation
-  of the device's bilinear transform, exact only at the endpoints.
+Two limits are worth knowing:
 
-Endpoints are correct throughout. `docs/re/04-open-questions.md` tracks each
-item, and `internal/protocol/capture_oracle_test.go` pins the current behaviour
-against the captures so any change is deliberate.
+- Values quantise to the device's 256 steps, so reading a parameter back can
+  differ from what was written by up to one step. That is the hardware's
+  resolution.
+- `powf`, `logf` and `cos` run in float32 in the binary and float64 here, which
+  can differ by a single LSB — around one part in 2.4 million on a 31-bit
+  coefficient.
+
+Microphones on firmware 2.1.2 or older need a different scale factor that is not
+implemented; see Q9 in `docs/re/04-open-questions.md`.
+`internal/protocol/capture_oracle_test.go` pins behaviour against the USB
+captures so any change is deliberate.
 
 ## Reverse-engineering notes
 
@@ -59,22 +62,30 @@ against the captures so any change is deliberate.
 |---|---|
 | `00-setup.md` | Ghidra + GhidrAssistMCP, Frida, USB capture |
 | `01-addresses.md` | function and data addresses in `RODE Connect.exe` |
-| `02-protocol.md` | the USB HID DSP protocol |
-| `03-luts.md` | lookup tables: provenance and what's wrong with them |
-| `04-open-questions.md` | what is still unresolved |
-| `05-juce.md` | using the JUCE source to read the UI code |
-| `06-static-extraction.md` | what the PE image gave up without Ghidra |
-| `07-workplan.md` | what is left, and the order to do it in |
+| `02-protocol.md` | the USB HID DSP wire protocol |
+| `03-encoders.md` | exact encoder and decoder formulas |
+| `04-open-questions.md` | what is still unresolved, and what is settled |
+| `05-juce.md` | using the JUCE source to read the UI and stream code |
+| `06-static-extraction.md` | extracting the lookup tables from the PE image |
 
 `tools/frida/` holds instrumentation scripts for the RØDE Connect binary.
+
+The microphone's DSP state is readable, so `rode-dsp status` reports what the
+device actually holds rather than the last-saved config — it stays correct even
+after RØDE Connect or another instance has changed something. Pass
+`--config-only` for the config's view.
 
 Three commands exist for protocol work rather than daily use:
 
 ```
-rode-dsp probe-effects    # which effect IDs does the firmware acknowledge?
+rode-dsp probe-effects    # which effect IDs actually hold state?
 rode-dsp read-raw         # probe HID report 0x03
 rode-dsp send-raw --i-know-what-this-does <hex>
 ```
+
+There is no Equalizer, High Pass Filter or De-Esser on this microphone. RØDE
+Connect contains panels for all three and hides them; the firmware has no
+matching DSP blocks. Q5 in `04-open-questions.md` has the evidence.
 
 ## Tests
 

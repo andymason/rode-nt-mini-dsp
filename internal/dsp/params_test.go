@@ -148,36 +148,36 @@ func TestLogScaledEncodersSurviveNonPositiveInput(t *testing.T) {
 	}
 }
 
-// TestInitCountsCoverRegistry checks protocol.InitCounts against the registry.
-// An INIT sweep covers param 0x00 (enable) plus every registered param, and may
+// TestParamCountsCoverRegistry checks protocol.ParamCounts against the registry.
+// A startup read covers param 0x00 (enable) plus every registered param, and may
 // additionally cover parameters the UI never exposes.
 //
-// As of the February 2026 captures the only surplus is Aural Exciter, whose
-// InitCount of 4 covers params 0x00-0x03 while the UI exposes only 0x01-0x02.
-// That extra param 0x03 is the documented "mystery" parameter: it appears in
-// the INIT phase but is never SET. See docs/re/04-open-questions.md.
-func TestInitCountsCoverRegistry(t *testing.T) {
+// The only surplus is Aural Exciter, whose count of 4 covers params 0x00-0x03
+// while the UI exposes only 0x01-0x02. Param 0x03 is read at startup but never
+// SET, and the device answers a read of Big Bottom's param 0x03 too even though
+// RØDE Connect does not ask. See Q6 in docs/re/04-open-questions.md.
+func TestParamCountsCoverRegistry(t *testing.T) {
 	hidden := map[byte]int{
-		protocol.EffAE: 1, // param 0x03, INIT-only
+		protocol.EffAE: 1, // param 0x03, read-only
 	}
 
 	for id, eff := range Effects {
-		count, ok := protocol.InitCounts[id]
+		count, ok := protocol.ParamCounts[id]
 		if !ok {
-			t.Errorf("%s: no InitCounts entry for effect %#02x", eff.Name, id)
+			t.Errorf("%s: no ParamCounts entry for effect %#02x", eff.Name, id)
 			continue
 		}
 
 		want := len(eff.Params) + 1 + hidden[id]
 		if count != want {
-			t.Errorf("%s: InitCounts is %d, want %d (%d registered params + enable + %d hidden)",
+			t.Errorf("%s: ParamCounts is %d, want %d (%d registered params + enable + %d hidden)",
 				eff.Name, count, want, len(eff.Params), hidden[id])
 		}
 	}
 
-	for id := range protocol.InitCounts {
+	for id := range protocol.ParamCounts {
 		if _, ok := Effects[id]; !ok {
-			t.Errorf("InitCounts has effect %#02x with no registry entry", id)
+			t.Errorf("ParamCounts has effect %#02x with no registry entry", id)
 		}
 	}
 }

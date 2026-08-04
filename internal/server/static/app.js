@@ -10,8 +10,10 @@
 // for each parameter — all computed server-side by the same functions that drive
 // the device, so what is shown is what was sent.
 //
-// The device has no read-back path for DSP parameters (they are write-only), so
-// the server's saved state is the only source of truth for current values.
+// DSP parameters are readable: command 0x03 asks the device for one and it
+// answers with the live coefficient. The server's state is what it last sent,
+// which agrees with the device to within its 256-step quantisation unless
+// something else has driven the microphone since.
 
 "use strict";
 
@@ -116,7 +118,7 @@ const hexPairs = (h) => (h ? h.replace(/(..)/g, "$1 ").trim() : "");
  * shape chosen to look plausible: the gate's one-pole attack coefficient, its
  * hold and release ramps and its hysteresis offset are the same expressions the
  * encoder transmits, so the plotted curve moves for the reasons the device's
- * own gate would. See docs/re/08-encoders.md.
+ * own gate would. See docs/re/03-encoders.md.
  */
 
 const FS = 48000; // the device runs at 48 kHz; every time constant is in samples
@@ -363,7 +365,7 @@ function simulateComp(p, cols, live) {
 // Aural Exciter and Big Bottom are the honest exception in this file. Their
 // corner frequency is exact — it is the number the packet carries — but the
 // device's filter topology is not recovered: ae_tune_1 and ae_tune_2 are two
-// Q31 coefficients whose meaning docs/re/08-encoders.md does not settle, and
+// Q31 coefficients whose meaning docs/re/03-encoders.md does not settle, and
 // Big Bottom's tune sends a bare index with no coefficient at all. So the skirt
 // is drawn as a conventional second-order shelf, which is right about which
 // part of the spectrum is touched and where it rolls off, and the caption on
@@ -626,9 +628,9 @@ class App {
       dl.append(wrap);
     }
     document.getElementById("device-note").textContent =
-      `Encodings transcribed from ${d.source}. DSP parameters are write-only: ` +
-      `the microphone cannot be asked what it currently holds, so the values ` +
-      `shown are the ones this server last sent.`;
+      `Encodings transcribed from ${d.source}. Values shown are the ones this ` +
+      `server last sent; the microphone can also be asked what it holds — run ` +
+      `"rode-dsp status" to read it back.`;
   }
 
   renderEffects(effects) {

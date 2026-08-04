@@ -52,7 +52,7 @@ func connectCommand(args []string) error {
 	// Send initialization packets (unless disabled)
 	if !*noInit {
 		ctx.Printf("Sending initialization packets... ")
-		if err := ctx.Device.SendInit(); err != nil {
+		if err := ctx.Device.Handshake(); err != nil {
 			ctx.Println("FAILED")
 			ctx.Device.Disconnect()
 			return fmt.Errorf("failed to send init packets: %w", err)

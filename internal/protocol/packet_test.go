@@ -36,15 +36,19 @@ func TestBuildPacketLayout(t *testing.T) {
 	}
 }
 
-func TestBuildInitPacketIsZeroed(t *testing.T) {
-	p := BuildInitPacket(EffComp, 0x03)
+func TestBuildGetPacketIsZeroed(t *testing.T) {
+	p := BuildGetPacket(EffComp, 0x03)
 
-	if p[2] != CmdInit {
-		t.Errorf("command = %#02x, want CmdInit %#02x", p[2], CmdInit)
+	if p[2] != CmdGet {
+		t.Errorf("command = %#02x, want CmdGet %#02x", p[2], CmdGet)
 	}
+	if p[3] != 0x03 {
+		t.Errorf("param = %#02x, want 0x03", p[3])
+	}
+	// The zero value field is why a capture of these reads like an "init".
 	for i := 4; i < PacketSize; i++ {
 		if p[i] != 0 {
-			t.Errorf("byte %d = %#02x, want zero (INIT carries no value)", i, p[i])
+			t.Errorf("byte %d = %#02x, want zero (GET carries no value)", i, p[i])
 		}
 	}
 }

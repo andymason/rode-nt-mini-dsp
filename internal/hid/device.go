@@ -22,7 +22,7 @@ type Device struct {
 	device     *gohid.Device
 	connected  bool
 	sendQueue  chan [protocol.PacketSize]byte
-	ackChan    chan bool
+	ackChan    chan []byte
 	done       chan struct{}
 	readDone   chan struct{}
 	workerDone chan struct{}
@@ -34,7 +34,7 @@ type Device struct {
 func NewDevice() *Device {
 	return &Device{
 		sendQueue:  make(chan [protocol.PacketSize]byte, 100),
-		ackChan:    make(chan bool, 1),
+		ackChan:    make(chan []byte, 1),
 		done:       make(chan struct{}),
 		readDone:   make(chan struct{}),
 		workerDone: make(chan struct{}),
@@ -248,11 +248,22 @@ const DefaultAckTimeout = 250 * time.Millisecond
 // A false return means the write succeeded but no ACK arrived within timeout.
 // An error means the write itself failed.
 func (d *Device) SendAndAwaitAck(packet [protocol.PacketSize]byte, timeout time.Duration) (bool, error) {
+	reply, err := d.SendAndAwaitReply(packet, timeout)
+	return reply != nil, err
+}
+
+// SendAndAwaitReply writes one packet and returns the device's whole reply, or
+// nil if none arrived within timeout.
+//
+// For a SET the reply is just the ACK; for a GET (CmdGet, CmdGetAll) it also
+// carries the parameter data, which is the only way to observe device state.
+// Callers hand the reply to protocol.ParseResponse.
+func (d *Device) SendAndAwaitReply(packet [protocol.PacketSize]byte, timeout time.Duration) ([]byte, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
 	if !d.connected || d.device == nil {
-		return false, errors.New("device not connected")
+		return nil, errors.New("device not connected")
 	}
 	if timeout <= 0 {
 		timeout = DefaultAckTimeout
@@ -270,18 +281,81 @@ func (d *Device) SendAndAwaitAck(packet [protocol.PacketSize]byte, timeout time.
 
 	n, err := d.device.Write(packet[:])
 	if err != nil {
-		return false, fmt.Errorf("write failed: %w", err)
+		return nil, fmt.Errorf("write failed: %w", err)
 	}
 	if n != len(packet) {
-		return false, fmt.Errorf("short write: %d of %d bytes", n, len(packet))
+		return nil, fmt.Errorf("short write: %d of %d bytes", n, len(packet))
 	}
 
 	select {
-	case <-d.ackChan:
-		return true, nil
+	case reply := <-d.ackChan:
+		return reply, nil
 	case <-time.After(timeout):
-		return false, nil
+		return nil, nil
 	}
+}
+
+// ReadParam reads one parameter and returns the data field of the reply.
+func (d *Device) ReadParam(effectID, paramID byte, timeout time.Duration) ([]byte, error) {
+	reply, err := d.SendAndAwaitReply(protocol.BuildGetPacket(effectID, paramID), timeout)
+	if err != nil {
+		return nil, err
+	}
+	if reply == nil {
+		return nil, fmt.Errorf("no reply reading effect 0x%02x param 0x%02x", effectID, paramID)
+	}
+	_, data, err := protocol.ParseResponse(reply)
+	if err != nil {
+		return nil, fmt.Errorf("reading effect 0x%02x param 0x%02x: %w", effectID, paramID, err)
+	}
+	return data, nil
+}
+
+// ReadState queries the device for every parameter of every effect and returns
+// the state it actually holds.
+//
+// This is the sequence RØDE Connect performs at startup — 20 CmdGet packets in
+// effect order — which earlier analysis mistook for an INIT/CLEAR because the
+// requests carry an all-zero value field. The device answers each with the live
+// coefficient. See docs/re/02-protocol.md.
+func (d *Device) ReadState() (*dsp.DSPState, error) {
+	if !d.Connected() {
+		return nil, errors.New("device not connected")
+	}
+
+	state := dsp.NewDSPState()
+	effectOrder := []byte{protocol.EffComp, protocol.EffGate, protocol.EffAE, protocol.EffBB}
+
+	for _, effID := range effectOrder {
+		for pid := byte(0); pid < byte(protocol.ParamCounts[effID]); pid++ {
+			data, err := d.ReadParam(effID, pid, DefaultAckTimeout)
+			if err != nil {
+				return nil, err
+			}
+
+			if pid == 0x00 {
+				enabled, ok := protocol.DecodeEnabled(data)
+				if !ok {
+					return nil, fmt.Errorf("effect 0x%02x: empty enable reply", effID)
+				}
+				state.SetEnabled(effID, enabled)
+				continue
+			}
+
+			value, ok := protocol.DecodeParam(effID, pid, data)
+			if !ok {
+				// Aural Exciter param 0x03 has no UI meaning and no decoder;
+				// it is read because RØDE Connect reads it, not because the
+				// value is understood. See Q6 in docs/re/04-open-questions.md.
+				continue
+			}
+			if err := state.SetParam(effID, pid, value); err != nil {
+				return nil, fmt.Errorf("effect 0x%02x param 0x%02x: %w", effID, pid, err)
+			}
+		}
+	}
+
+	return state, nil
 }
 
 // workerLoop processes packets from the send queue
@@ -331,11 +405,17 @@ func (d *Device) readLoop() {
 				}
 
 				// Check for ACK: report ID must be 0x01, 0x03, or 0x07 and byte[2] == AckByte
+				//
+				// Everything after the ACK byte is the parameter data a GET
+				// asked for, so the whole reply is forwarded rather than a bare
+				// "yes". buf is reused on the next iteration and must be copied.
 				foundAck := false
 				if n >= 3 && (buf[0] == 0x01 || buf[0] == 0x03 || buf[0] == 0x07) && buf[2] == protocol.AckByte {
 					foundAck = true
+					reply := make([]byte, n)
+					copy(reply, buf[:n])
 					select {
-					case d.ackChan <- true:
+					case d.ackChan <- reply:
 						if debug {
 							fmt.Printf("ACK delivered to channel (report %02x)\n", buf[0])
 						}
@@ -353,30 +433,35 @@ func (d *Device) readLoop() {
 	}
 }
 
-// SendInit sends all initialization packets (CmdInit)
-func (d *Device) SendInit() error {
+// Handshake performs the startup read RØDE Connect performs, discarding the
+// results.
+//
+// It exists to keep rode-dsp's opening exchange byte-identical to the official
+// application's, which is the only reason to send it: the device does not
+// require it, and it does not clear anything despite the "INIT" name this used
+// to carry. Callers that want the values should use ReadState instead.
+func (d *Device) Handshake() error {
 	if !d.Connected() {
 		return errors.New("device not connected")
 	}
 
 	if d.debug {
-		fmt.Println("Sending INIT_ALL packets")
+		fmt.Println("Sending startup GET sweep")
 	}
 
-	// Send INIT packets for each effect in fixed order: Comp, Gate, AE, BB
 	effectOrder := []byte{protocol.EffComp, protocol.EffGate, protocol.EffAE, protocol.EffBB}
 	for _, effID := range effectOrder {
-		count := protocol.InitCounts[effID]
+		count := protocol.ParamCounts[effID]
 		for pid := byte(0); pid < byte(count); pid++ {
-			packet := protocol.BuildInitPacket(effID, pid)
+			packet := protocol.BuildGetPacket(effID, pid)
 			if err := d.Send(packet); err != nil {
-				return fmt.Errorf("failed to send INIT packet for effect %02x param %02x: %w", effID, pid, err)
+				return fmt.Errorf("failed to send GET for effect %02x param %02x: %w", effID, pid, err)
 			}
 		}
 	}
 
 	if d.debug {
-		fmt.Println("INIT_ALL complete")
+		fmt.Println("Startup GET sweep complete")
 	}
 
 	// Wait for all packets to be transmitted

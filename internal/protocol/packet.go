@@ -15,10 +15,18 @@ func BuildPacket(effectID, cmd, paramID byte, value []byte) [PacketSize]byte {
 	return packet
 }
 
-// BuildInitPacket creates an INIT command packet (cmd = CmdInit)
-func BuildInitPacket(effectID, paramID byte) [PacketSize]byte {
-	// INIT packets have empty value field (all zeros)
-	return BuildPacket(effectID, CmdInit, paramID, []byte{})
+// BuildGetPacket creates a read request for one parameter. The value field is
+// unused and sent as zeros, which is why these packets look like an "init" or
+// "clear" in a capture; the device replies with the parameter's current value.
+func BuildGetPacket(effectID, paramID byte) [PacketSize]byte {
+	return BuildPacket(effectID, CmdGet, paramID, []byte{})
+}
+
+// BuildGetAllPacket creates a read request for every parameter of an effect at
+// once. RØDE Connect uses this form only on the older firmware path
+// (FUN_140102d40 false); the NT-USB Mini answers it regardless.
+func BuildGetAllPacket(effectID byte) [PacketSize]byte {
+	return BuildPacket(effectID, CmdGetAll, 0x00, []byte{})
 }
 
 // BuildEnablePacket creates a SET command packet to enable/disable an effect

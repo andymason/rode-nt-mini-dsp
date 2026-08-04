@@ -17,6 +17,8 @@ func statusCommand(args []string) error {
 	quiet := fs.Bool("quiet", false, "Suppress progress output (errors still go to stderr)")
 	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
 	asJSON := fs.Bool("json", false, "Output DSP state as JSON (machine-readable, useful in scripts)")
+	fromConfig := fs.Bool("config-only", false,
+		"Show the local config instead of querying the device")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -41,18 +43,34 @@ func statusCommand(args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	// Prefer the device's own state over the config's record of it. The two
+	// disagree whenever something else has driven the microphone since the last
+	// save — RØDE Connect, another rode-dsp instance, or a replug.
+	connected := ctx.EnsureDeviceConnected() == nil
+	state := ctx.State
+	source := "local config (last saved state)"
+
+	if connected && !*fromConfig {
+		if live, err := ctx.Device.ReadState(); err == nil {
+			state = live
+			source = "device"
+		} else if !*asJSON {
+			ctx.Printf("Note: could not read device state (%v); showing local config.\n", err)
+		}
+	}
+
 	// JSON output: emit machine-readable state and exit
 	if *asJSON {
 		out := struct {
 			Connected  bool          `json:"connected"`
 			ConfigFile string        `json:"config_file"`
+			Source     string        `json:"source"`
 			State      *dsp.DSPState `json:"state"`
 		}{
+			Connected:  connected,
 			ConfigFile: ctx.ConfigPath,
-			State:      ctx.State,
-		}
-		if err := ctx.EnsureDeviceConnected(); err == nil {
-			out.Connected = true
+			Source:     source,
+			State:      state,
 		}
 		data, err := json.MarshalIndent(out, "", "  ")
 		if err != nil {
@@ -67,8 +85,8 @@ func statusCommand(args []string) error {
 	ctx.Println("================================")
 
 	// Connection status
-	if err := ctx.EnsureDeviceConnected(); err != nil {
-		ctx.Printf("Connection: DISCONNECTED (%v)\n", err)
+	if !connected {
+		ctx.Println("Connection: DISCONNECTED")
 	} else {
 		ctx.Println("Connection: CONNECTED")
 	}
@@ -81,12 +99,11 @@ func statusCommand(args []string) error {
 	}
 
 	ctx.Println()
-	ctx.Println("Note: Values shown are from local config (last saved state).")
-	ctx.Println("The device cannot be queried for its current state via USB.")
+	ctx.Printf("Values read from: %s\n", source)
 	ctx.Println()
 
 	// Print state
-	ctx.Printf("%s", ctx.State.String())
+	ctx.Printf("%s", state.String())
 
 	return nil
 }

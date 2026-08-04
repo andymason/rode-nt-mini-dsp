@@ -60,7 +60,7 @@ func defaultsCommand(args []string) error {
 
 		// Send initialization packets
 		ctx.Printf("Sending initialization packets... ")
-		if err := ctx.Device.SendInit(); err != nil {
+		if err := ctx.Device.Handshake(); err != nil {
 			ctx.Println("FAILED")
 			return fmt.Errorf("failed to send init packets: %w", err)
 		}

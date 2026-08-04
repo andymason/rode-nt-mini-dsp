@@ -8,7 +8,7 @@ import (
 // Encoders transcribed from RØDE Connect.exe (SHA-256 c3015816…1023c).
 //
 // The formulas are read off the instruction stream, not fitted to captures; see
-// docs/re/08-encoders.md for the decompilation and docs/re/01-addresses.md for
+// docs/re/03-encoders.md for the decompilation and docs/re/01-addresses.md for
 // the addresses. Three properties of the original are reproduced deliberately:
 //
 //   - Indices truncate (CVTTSS2SI), they do not round.

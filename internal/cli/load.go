@@ -58,10 +58,10 @@ func loadCommand(args []string) error {
 	ctx.Println("OK")
 
 	// Send init/reset sequence
-	ctx.Printf("Sending INIT sequence... ")
-	if err := ctx.Device.SendInit(); err != nil {
+	ctx.Printf("Sending startup handshake... ")
+	if err := ctx.Device.Handshake(); err != nil {
 		ctx.Println("FAILED")
-		return fmt.Errorf("INIT sequence failed: %w", err)
+		return fmt.Errorf("startup handshake failed: %w", err)
 	}
 	ctx.Println("OK")
 
