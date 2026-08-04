@@ -5,7 +5,12 @@ import (
 	"rode-dsp/internal/protocol"
 )
 
-// ParamDef defines a DSP parameter
+// ParamDef defines a DSP parameter.
+//
+// The last four fields exist for the GUI's advanced mode: they describe how a
+// UI value becomes wire bytes, so the interface can explain the encoding
+// rather than restate it. IndexFn is the same function the encoder calls, so
+// the two cannot drift apart. See docs/re/08-encoders.md.
 type ParamDef struct {
 	EffectID   byte
 	ParamID    byte
@@ -17,6 +22,17 @@ type ParamDef struct {
 	Resolution float64
 	EncodeFn   func(float64) []byte
 	FormatFn   func(float64) string
+
+	// Scale is how the value is distributed across the control, "linear" or
+	// "log". It mirrors the encoder, not a display preference.
+	Scale string
+	// Table names the embedded lookup table, empty when none is needed.
+	Table string
+	// Formula is the index or coefficient expression, as read from the binary.
+	Formula string
+	// IndexFn returns the 0-255 table index, or nil when the parameter is not
+	// table-indexed (the noise gate computes coefficients directly).
+	IndexFn func(float64) int
 }
 
 // EffectDef defines a DSP effect
@@ -42,6 +58,10 @@ var Effects = map[byte]EffectDef{
 				Default:    -20.0,
 				Resolution: 0.5,
 				EncodeFn:   protocol.EncodeCompThreshold,
+				Scale:      "linear",
+				Table:      "comp_threshold",
+				Formula:    "idx = trunc((1 - (dB + 60) / 60) * 255)",
+				IndexFn:    protocol.CompThresholdIndex,
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f dB", v) },
 			},
 			{
@@ -54,6 +74,9 @@ var Effects = map[byte]EffectDef{
 				Default:    3.0,
 				Resolution: 0.1,
 				EncodeFn:   protocol.EncodeCompRatio,
+				Scale:      "linear",
+				Formula:    "payload = trunc((ratio - 1.5) / 3 * 255)",
+				IndexFn:    protocol.CompRatioIndex,
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f:1", v) },
 			},
 			{
@@ -66,6 +89,10 @@ var Effects = map[byte]EffectDef{
 				Default:    0.7,
 				Resolution: 0.1,
 				EncodeFn:   protocol.EncodeCompAttack,
+				Scale:      "log",
+				Table:      "comp_attack",
+				Formula:    "idx = trunc(log(ms / 0.1) / log(100) * 255)",
+				IndexFn:    protocol.CompAttackIndex,
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.2f ms", v) },
 			},
 			{
@@ -78,6 +105,10 @@ var Effects = map[byte]EffectDef{
 				Default:    21.0,
 				Resolution: 0.5,
 				EncodeFn:   protocol.EncodeCompRelease,
+				Scale:      "log",
+				Table:      "comp_release",
+				Formula:    "idx = trunc(log(ms / 5) / log(40) * 255)",
+				IndexFn:    protocol.CompReleaseIndex,
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f ms", v) },
 			},
 			{
@@ -90,6 +121,10 @@ var Effects = map[byte]EffectDef{
 				Default:    2.0,
 				Resolution: 0.1,
 				EncodeFn:   protocol.EncodeCompGain,
+				Scale:      "linear",
+				Table:      "comp_gain",
+				Formula:    "idx = trunc(dB / 9 * 255)",
+				IndexFn:    protocol.CompGainIndex,
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f dB", v) },
 			},
 		},
@@ -108,6 +143,8 @@ var Effects = map[byte]EffectDef{
 				Default:    -42.0,
 				Resolution: 0.5,
 				EncodeFn:   protocol.EncodeNGThreshold,
+				Scale:      "linear",
+				Formula:    "Q31 = sat(trunc(10^(dB/20) x 2^31))",
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f dB", v) },
 			},
 			{
@@ -120,6 +157,8 @@ var Effects = map[byte]EffectDef{
 				Default:    0.8,
 				Resolution: 0.1,
 				EncodeFn:   protocol.EncodeNGAttack,
+				Scale:      "log",
+				Formula:    "w = 5/(s x 48000); Q31 = sat(sqrt(c^2 - 4c + 3) + c - 1), c = cos w",
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.2f ms", v) },
 			},
 			{
@@ -132,6 +171,8 @@ var Effects = map[byte]EffectDef{
 				Default:    80.0,
 				Resolution: 1.0,
 				EncodeFn:   protocol.EncodeNGHold,
+				Scale:      "log",
+				Formula:    "Q31 = sat(trunc(1 / (s x 48000) x 2^31))",
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f ms", v) },
 			},
 			{
@@ -144,6 +185,8 @@ var Effects = map[byte]EffectDef{
 				Default:    210.0,
 				Resolution: 1.0,
 				EncodeFn:   protocol.EncodeNGRelease,
+				Scale:      "log",
+				Formula:    "Q31 = sat(trunc(1 / (s x 48000) x 2^31))",
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f ms", v) },
 			},
 			{
@@ -156,6 +199,8 @@ var Effects = map[byte]EffectDef{
 				Default:    -9.0,
 				Resolution: 0.5,
 				EncodeFn:   protocol.EncodeNGRange,
+				Scale:      "linear",
+				Formula:    "Q31 = sat(trunc(10^(dB/20) x 2^31))",
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f dB", v) },
 			},
 			{
@@ -168,6 +213,8 @@ var Effects = map[byte]EffectDef{
 				Default:    50.0,
 				Resolution: 1.0,
 				EncodeFn:   protocol.EncodeNGHysteresis,
+				Scale:      "linear",
+				Formula:    "h = pct/100; Q31 = sat(trunc(10^((-1 - 7h)/20) x 2^31))",
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.0f%%", v) },
 			},
 		},
@@ -186,6 +233,10 @@ var Effects = map[byte]EffectDef{
 				Default:    49.0,
 				Resolution: 0.5,
 				EncodeFn:   protocol.EncodeAEHarmonics,
+				Scale:      "linear",
+				Table:      "harmonics_drive",
+				Formula:    "idx = trunc(pct / 100 * 255)",
+				IndexFn:    protocol.HarmonicsDriveIndex,
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f%%", v) },
 			},
 			{
@@ -198,6 +249,10 @@ var Effects = map[byte]EffectDef{
 				Default:    3516.0,
 				Resolution: 1.0,
 				EncodeFn:   protocol.EncodeAETune,
+				Scale:      "linear",
+				Table:      "ae_tune_1 + ae_tune_2",
+				Formula:    "idx = trunc((Hz - 600) / 4400 * 255)",
+				IndexFn:    protocol.AETuneIndex,
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.0f Hz", v) },
 			},
 		},
@@ -216,6 +271,10 @@ var Effects = map[byte]EffectDef{
 				Default:    62.0,
 				Resolution: 0.5,
 				EncodeFn:   protocol.EncodeBBDrive,
+				Scale:      "linear",
+				Table:      "harmonics_drive",
+				Formula:    "idx = trunc(pct / 100 * 255)",
+				IndexFn:    protocol.HarmonicsDriveIndex,
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.1f%%", v) },
 			},
 			{
@@ -228,6 +287,9 @@ var Effects = map[byte]EffectDef{
 				Default:    131.0,
 				Resolution: 1.0,
 				EncodeFn:   protocol.EncodeBBTune,
+				Scale:      "linear",
+				Formula:    "payload = trunc((Hz - 60) / 252 * 255)",
+				IndexFn:    protocol.BBTuneIndex,
 				FormatFn:   func(v float64) string { return fmt.Sprintf("%.0f Hz", v) },
 			},
 		},

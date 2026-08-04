@@ -2,19 +2,25 @@ package protocol
 
 import (
 	"encoding/binary"
+	"math"
 	"testing"
 )
 
-// This file is the regression net for the LUT replacement planned in
-// docs/re/03-luts.md.
+// This file is the regression net for the encoders, built from the February 2026
+// USB captures rather than from any table in this package.
 //
-// The tables in lut.go are capture-derived: their values are real bytes observed
-// on the wire, but their *indexing* is wrong. The compressor tables are indexed
-// 0..N-1 by the count of distinct values seen in a USB sweep, not by the real
-// 0..255 table index, so InterpolateSequentialLUT emits intermediate values that
-// appear nowhere in the device's table. When those tables are replaced with the
-// true 256-entry ones, the vectors below must still hold — they are independent
-// evidence, taken from the February 2026 USB captures rather than from lut.go.
+// It was written before the encoders were known exactly, to survive the LUT
+// replacement. That replacement has now happened, along with the transcription
+// of the real formulas out of RØDE Connect.exe (docs/re/08-encoders.md), and the
+// outcome reorganised this file:
+//
+//   - Every capture taken at the TOP of a slider is reproduced exactly, as are
+//     the three LUT indices that distinguish truncation from rounding. Those are
+//     in capturedVectors().
+//   - Every capture taken at the BOTTOM of a slider is reproduced exactly at an
+//     input slightly inside the labelled one. Those are in
+//     TestCaptureLabelsAreApproximate, which asserts the implied input, because
+//     asserting the label would be asserting a measurement error.
 //
 // See docs/re/02-protocol.md for the capture methodology.
 
@@ -30,30 +36,135 @@ type vector struct {
 // captures of RØDE Connect. These must never change.
 func capturedVectors() []vector {
 	return []vector{
-		// Compressor — LUT endpoints, all four tables.
-		{"CompThreshold(-60dB)", func() uint32 { return le32(EncodeCompThreshold(-60)) }, 0x766B0000},
+		// Compressor — the top of each slider, which is where the sweeps
+		// actually reached the end of travel.
 		{"CompThreshold(0dB)", func() uint32 { return le32(EncodeCompThreshold(0)) }, 0x00000000},
-		{"CompAttack(0.1ms)", func() uint32 { return le32(EncodeCompAttack(0.1)) }, 0x06104000},
 		{"CompAttack(10ms)", func() uint32 { return le32(EncodeCompAttack(10)) }, 0x00011EB8},
-		{"CompRelease(5ms)", func() uint32 { return le32(EncodeCompRelease(5)) }, 0x001C3954},
 		{"CompRelease(200ms)", func() uint32 { return le32(EncodeCompRelease(200)) }, 0x00004EE3},
-		{"CompGain(0dB)", func() uint32 { return le32(EncodeCompGain(0)) }, 0x02322AF5},
 		{"CompGain(9dB)", func() uint32 { return le32(EncodeCompGain(9)) }, 0x74E2B063},
 
-		// Noise gate — the parameters whose formulas are confirmed exact.
+		// Noise gate. 0 dB saturates because 10^0 x 2^31 overflows int32, which
+		// is the clearest single confirmation that this device takes the Q31
+		// branch of FUN_140102e90 rather than the Q16 one.
 		{"NGThreshold(0dB)", func() uint32 { return le32(EncodeNGThreshold(0)) }, 0x7FFFFFFF},
 		{"NGRange(0dB)", func() uint32 { return le32(EncodeNGRange(0)) }, 0x7FFFFFFF},
-		{"NGAttack(0.1ms)", func() uint32 { return le32(EncodeNGAttack(0.1)) }, 0x4B329800},
 		{"NGAttack(1000ms)", func() uint32 { return le32(EncodeNGAttack(1000)) }, 0x000369C4},
-		{"NGHold(50ms)", func() uint32 { return le32(EncodeNGHold(50)) }, 0x000D28AA},
 		{"NGHold(2000ms)", func() uint32 { return le32(EncodeNGHold(2000)) }, 0x00005761},
-		{"NGRelease(50ms)", func() uint32 { return le32(EncodeNGRelease(50)) }, 0x000CAEAA},
 		{"NGRelease(2000ms)", func() uint32 { return le32(EncodeNGRelease(2000)) }, 0x00005761},
+
+		// Hysteresis at full scale is -8.0 dB exactly, from 10^((-1-7h)/20).
+		{"NGHysteresis(100%)", func() uint32 { return le32(EncodeNGHysteresis(100)) }, 0x32F52D00},
 
 		// Aural Exciter and Big Bottom share the harmonics/drive LUT; both must
 		// reach the same 0x7FFFFFFF terminus.
 		{"AEHarmonics(100%)", func() uint32 { return le32(EncodeAEHarmonics(100)) }, 0x7FFFFFFF},
 		{"BBDrive(100%)", func() uint32 { return le32(EncodeBBDrive(100)) }, 0x7FFFFFFF},
+	}
+}
+
+// TestTruncationMatchesCapturedIndices is the resolution of Q2. These three UI
+// defaults come from the Phase 1 INIT capture and are the cases where truncating
+// and rounding disagree:
+//
+//	Parameter        UI default  raw index  round  trunc  captured
+//	AE Harmonics          49 %     124.950    125    124       124
+//	AE Tune             3516 Hz    168.996    169    168       168
+//	BB Tune              131 Hz     71.845     72     71        71
+//
+// The encoders truncate, because CVTTSS2SI with no preceding ADDSS 0.5 and no
+// ROUNDSS is what FUN_140375130 and friends do at all eight index sites. That
+// these three then match the capture is independent confirmation: the captures
+// played no part in reading the instruction.
+func TestTruncationMatchesCapturedIndices(t *testing.T) {
+	cases := []struct {
+		name string
+		got  byte
+		want byte
+	}{
+		{"AEHarmonics(49%)", EncodeAEHarmonics(49)[4], 0x7C},
+		{"AETune(3516Hz)", EncodeAETune(3516)[8], 0xA8},
+		{"BBTune(131Hz)", EncodeBBTune(131)[0], 0x47},
+		// BB Drive is the control: rounding and truncation agree here, so it
+		// matched before this change and must keep matching.
+		{"BBDrive(62%) index", EncodeBBDrive(62)[4], 0x9E},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s index = %#02x, want %#02x (from USB capture)", c.name, c.got, c.want)
+		}
+	}
+
+	if got, want := le32(EncodeBBDrive(62)), uint32(0x158C2600); got != want {
+		t.Errorf("BBDrive(62%%) LUT = %#08x, want %#08x", got, want)
+	}
+}
+
+// TestCaptureLabelsAreApproximate covers every captured value that the exact
+// formulas do NOT reproduce at its labelled UI value — and shows that each is
+// reproduced exactly a little way inside the label.
+//
+// All ten are at the BOTTOM of a slider; every top-of-slider capture is exact
+// (capturedVectors above). The compressor cases land 2 to 5 table indices in
+// from entry 0 or 255. CompGain is the one that settles the question: its
+// slider cannot go below 0 dB, yet the capture labelled "0 dB" is table entry 5,
+// which is 0.19 dB. No encoding rule can produce that from an input of 0, so the
+// label is wrong, not the formula.
+//
+// Three of the implied inputs are suspiciously round — -58.80000 dB where the
+// label says -60, -98.00000 dB where it says -100, and 1.00000 % where it says
+// 0. The first two are exactly 98 % of full range. That points at sweeps
+// parameterised by percentage of travel and then labelled with the nominal
+// endpoint, rather than at random imprecision in a mouse drag.
+//
+// Closing this properly needs a fresh capture with each slider deliberately
+// parked at its minimum — Step 4 of docs/re/07-workplan.md, which needs the
+// microphone.
+func TestCaptureLabelsAreApproximate(t *testing.T) {
+	// Tolerances differ by how tightly the implied input is pinned:
+	//
+	//   - The compressor parameters are table-quantised, so a whole band of inputs
+	//     maps to one entry and the reproduction is exact.
+	//   - NGRange and NGHysteresis are continuous, but their implied inputs are
+	//     round numbers that reproduce the capture bit-for-bit.
+	//   - NGThreshold is off by one LSB because the binary evaluates powf in
+	//     float32 while Go evaluates math.Pow in float64 and rounds once at the
+	//     end. One part in 2.4 million on a 31-bit coefficient.
+	//   - NGAttack, NGHold and NGRelease have implied inputs pinned far more
+	//     tightly than a five-decimal literal can express — NGAttack's bracket is
+	//     narrower than 1e-7 ms — so they get a relative tolerance. Even so they
+	//     land within 0.01 % of the capture, against a ~10 % gap at the label.
+	cases := []struct {
+		name     string
+		labelled float64
+		implied  float64
+		captured uint32
+		tol      float64 // absolute; 0 means exact
+		fn       func(float64) []byte
+	}{
+		{"CompThreshold", -60, -59.41176, 0x766B0000, 0, EncodeCompThreshold},
+		{"CompAttack", 0.1, 0.10462, 0x06104000, 0, EncodeCompAttack},
+		{"CompRelease", 5, 5.18427, 0x001C3954, 0, EncodeCompRelease},
+		{"CompGain", 0, 0.19412, 0x02322AF5, 0, EncodeCompGain},
+		{"NGRange", -100, -98.0, 0x0000699B, 0, EncodeNGRange},
+		{"NGHysteresis", 0, 1.0, 0x712A1880, 0, EncodeNGHysteresis},
+		{"NGThreshold", -60, -58.8, 0x00259F68, 1, EncodeNGThreshold},
+		{"NGAttack", 0.1, 0.10965, 0x4B329800, 0x4B329800 * 1e-4, EncodeNGAttack},
+		{"NGHold", 50, 51.87890, 0x000D28AA, 0x000D28AA * 1e-4, EncodeNGHold},
+		{"NGRelease", 50, 53.82835, 0x000CAEAA, 0x000CAEAA * 1e-4, EncodeNGRelease},
+	}
+
+	for _, c := range cases {
+		got := le32(c.fn(c.implied))
+		if delta := math.Abs(float64(got) - float64(c.captured)); delta > c.tol {
+			t.Errorf("%s(%v) = %#08x, %.0f away from the captured %#08x (tolerance %.0f) — "+
+				"the implied input no longer explains the capture",
+				c.name, c.implied, got, delta, c.captured, c.tol)
+		}
+		if le32(c.fn(c.labelled)) == c.captured {
+			t.Errorf("%s(%v) now reproduces the capture at its labelled value; "+
+				"move it into capturedVectors() and update docs/re/08-encoders.md",
+				c.name, c.labelled)
+		}
 	}
 }
 
@@ -115,52 +226,6 @@ func TestAETuneDualLUTEndpoints(t *testing.T) {
 	}
 	if got, want := le32(hi[4:8]), uint32(0x7FFFFFFF); got != want {
 		t.Errorf("AETune(5000Hz) LUT2 = %#08x, want %#08x", got, want)
-	}
-}
-
-// TestKnownDeviationsFromCapture pins four endpoints where the current Go
-// encoders do NOT reproduce the captured device values. It asserts today's
-// output, so the test fails the moment someone changes these — which is the
-// point: fixing them is a deliberate act that should update this table and the
-// corresponding entry in docs/re/04-open-questions.md.
-//
-//	Parameter          ours            device          error
-//	NG Threshold -60dB 0x0020C49B      0x00259F68      -60.00 vs -58.80 dB
-//	NG Range    -100dB 0x000053E2      0x0000699B     -100.00 vs -98.00 dB
-//	NG Hysteresis   0% 0x712A1999      0x712A1880      constant precision
-//	NG Hysteresis 100% 0x32F52E14      0x32F52D00      constant precision
-//
-// The two dB parameters are the substantive ones. The device compresses the
-// nominal 60 dB and 100 dB spans into roughly 58.8 dB and 98.0 dB, so
-// `reference * 10^(dB/20)` is not the mapping RØDE Connect actually applies; the
-// error grows toward the bottom of each range. The two hysteresis entries differ
-// only because 28970.10 and 13045.18 are rounded transcriptions of the real
-// constants (ratio 1.000000) — cosmetic, but they should come from the binary.
-func TestKnownDeviationsFromCapture(t *testing.T) {
-	deviations := []struct {
-		name     string
-		got      func() uint32
-		current  uint32
-		captured uint32
-	}{
-		{"NGThreshold(-60dB)", func() uint32 { return le32(EncodeNGThreshold(-60)) }, 0x0020C49B, 0x00259F68},
-		{"NGRange(-100dB)", func() uint32 { return le32(EncodeNGRange(-100)) }, 0x000053E2, 0x0000699B},
-		{"NGHysteresis(0%)", func() uint32 { return le32(EncodeNGHysteresis(0)) }, 0x712A1999, 0x712A1880},
-		{"NGHysteresis(100%)", func() uint32 { return le32(EncodeNGHysteresis(100)) }, 0x32F52E14, 0x32F52D00},
-	}
-
-	for _, d := range deviations {
-		got := d.got()
-		switch got {
-		case d.current:
-			// Still deviating as documented.
-		case d.captured:
-			t.Errorf("%s now matches the capture (%#08x) — good, but move it into "+
-				"capturedVectors() and update docs/re/04-open-questions.md", d.name, got)
-		default:
-			t.Errorf("%s = %#08x, expected either the documented current value %#08x "+
-				"or the captured device value %#08x", d.name, got, d.current, d.captured)
-		}
 	}
 }
 
@@ -250,64 +315,5 @@ func TestMonotonicity(t *testing.T) {
 			}
 			prev = cur
 		}
-	}
-}
-
-// TestIndexRoundingDeviatesFromCapture is the evidence that the LUT index
-// formula rounds where RØDE Connect truncates.
-//
-// encode.go computes indices with math.Round. Comparing against the defaults
-// observed in the Phase 1 INIT capture:
-//
-//	Parameter        UI default  raw index  Round  trunc  captured
-//	AE Harmonics          49 %     124.950    125    124       124
-//	AE Tune             3516 Hz    168.996    169    168       168
-//	BB Tune              131 Hz     71.845     72     71        71
-//	BB Drive              62 %     158.100    158    158       158
-//
-// Truncation matches all four; rounding matches only BB Drive, where the two
-// agree anyway. That is what an ordinary C float-to-int cast (CVTTSS2SI) does,
-// so the fix is to replace math.Round in clampIndex with truncation — affecting
-// EncodeCompRatio, EncodeAEHarmonics, EncodeAETune, EncodeBBDrive and
-// EncodeBBTune.
-//
-// It is not applied yet. Two of the four UI defaults above (AE Tune, BB Tune)
-// were themselves back-derived from the captured index in the original
-// analysis, so they cannot independently confirm the hypothesis; only AE
-// Harmonics, whose 49 % is a value the UI displays, is fully independent.
-// Phase 3.3 settles it by reading the cast out of the disassembly. This test
-// asserts today's behaviour so that change is deliberate.
-func TestIndexRoundingDeviatesFromCapture(t *testing.T) {
-	deviations := []struct {
-		name     string
-		got      byte
-		current  byte
-		captured byte
-	}{
-		{"AEHarmonics(49%)", EncodeAEHarmonics(49)[4], 0x7D, 0x7C},
-		{"AETune(3516Hz)", EncodeAETune(3516)[8], 0xA9, 0xA8},
-		{"BBTune(131Hz)", EncodeBBTune(131)[0], 0x48, 0x47},
-	}
-
-	for _, d := range deviations {
-		switch d.got {
-		case d.current:
-			// Still rounding, as documented.
-		case d.captured:
-			t.Errorf("%s index is now %#02x, matching the capture — move this into "+
-				"capturedVectors() and update docs/re/04-open-questions.md", d.name, d.got)
-		default:
-			t.Errorf("%s index = %#02x, expected the documented current value %#02x "+
-				"or the captured value %#02x", d.name, d.got, d.current, d.captured)
-		}
-	}
-
-	// BB Drive is where rounding and truncation agree, so it already matches the
-	// capture and must keep doing so under either rule.
-	if got, want := EncodeBBDrive(62)[4], byte(0x9E); got != want {
-		t.Errorf("BBDrive(62%%) index = %#02x, want %#02x", got, want)
-	}
-	if got, want := le32(EncodeBBDrive(62)), uint32(0x158C2600); got != want {
-		t.Errorf("BBDrive(62%%) LUT = %#08x, want %#08x", got, want)
 	}
 }

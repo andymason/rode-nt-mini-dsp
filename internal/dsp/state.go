@@ -119,7 +119,7 @@ func (s *DSPState) SetParam(effID, paramID byte, value float64) error {
 	// Apply resolution (snap to nearest resolution step)
 	if paramDef.Resolution > 0 {
 		steps := (value - paramDef.UIMin) / paramDef.Resolution
-		value = paramDef.UIMin + math.Round(steps)*paramDef.Resolution
+		value = snapDecimals(paramDef.UIMin+math.Round(steps)*paramDef.Resolution, paramDef.Resolution)
 		// Ensure we stay within bounds after rounding
 		if value < paramDef.UIMin {
 			value = paramDef.UIMin
@@ -181,6 +181,11 @@ func (s *DSPState) GetAllEnabled() map[byte]bool {
 }
 
 // toConfigKey converts a name like "Noise Gate" to a JSON config key like "noise_gate"
+// ConfigKey is the JSON key DSPState marshals a given effect or parameter name
+// to. The GUI schema publishes these so the browser can match a state document
+// against the registry without reimplementing the rule.
+func ConfigKey(name string) string { return toConfigKey(name) }
+
 func toConfigKey(name string) string {
 	return strings.ToLower(strings.ReplaceAll(name, " ", "_"))
 }
@@ -320,6 +325,23 @@ func (s *DSPState) String() string {
 	}
 
 	return sb.String()
+}
+
+// snapDecimals trims the binary floating-point residue that snapping to a
+// resolution step leaves behind: -60 + math.Round(x)*0.1 lands on
+// 0.7000000000000001, which is what then goes into the config file. The file is
+// meant to be readable and hand-editable, and the difference is many orders of
+// magnitude below anything the 8-bit indices and Q31 coefficients can carry.
+func snapDecimals(value, resolution float64) float64 {
+	places := 2.0
+	switch {
+	case resolution >= 1:
+		places = 0
+	case resolution >= 0.1:
+		places = 1
+	}
+	scale := math.Pow(10, places)
+	return math.Round(value*scale) / scale
 }
 
 // clampToRange constrains a value to a parameter's declared UI range, mapping

@@ -39,6 +39,12 @@ const (
 	MsgTypeParamUpdate      = "param_update"
 	MsgTypeConnectionStatus = "connection_status"
 	MsgTypeError            = "error"
+
+	// MsgTypePreview asks what a value would encode to without changing
+	// anything. The GUI's advanced mode uses it while a slider is being
+	// dragged, so the wire bytes track the handle without writing to the
+	// device or the config file on every mouse move.
+	MsgTypePreview = "preview"
 )
 
 // WSMessage is the WebSocket message structure
@@ -48,8 +54,11 @@ type WSMessage struct {
 	Param   *int            `json:"param,omitempty"`
 	Value   json.RawMessage `json:"value,omitempty"`
 	Enabled *bool           `json:"enabled,omitempty"`
-	Hex     *string         `json:"hex,omitempty"`
 	Error   *string         `json:"error,omitempty"`
+
+	// Encoding carries the wire representation of Value back to the GUI, for
+	// preview responses and param_update broadcasts.
+	Encoding *Encoding `json:"encoding,omitempty"`
 }
 
 // Client represents a WebSocket connection
@@ -153,6 +162,7 @@ func (s *Server) Start() error {
 	mux.Handle("/", staticHandler)
 	mux.HandleFunc("/ws", s.wsHandler)
 	mux.HandleFunc("/api/state", s.stateHandler)
+	mux.HandleFunc("/api/schema", s.schemaHandler)
 
 	// Create HTTP server
 	addr := fmt.Sprintf(":%d", s.port)
@@ -303,6 +313,13 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 		}
 		s.handleSetEnable(client, byte(*msg.Effect), *msg.Enabled)
 
+	case MsgTypePreview:
+		if msg.Effect == nil || msg.Param == nil || msg.Value == nil {
+			s.sendError(client, "Missing required fields for preview")
+			return
+		}
+		s.handlePreview(client, byte(*msg.Effect), byte(*msg.Param), msg.Value)
+
 	case MsgTypeResetDefaults:
 		if msg.Effect == nil {
 			s.sendError(client, "Missing effect for reset_defaults")
@@ -366,16 +383,48 @@ func (s *Server) handleSetParam(client *Client, effectID, paramID byte, valueJSO
 		}
 	}
 
-	// Broadcast update to all clients
+	// Broadcast update to all clients, with the wire bytes attached so every
+	// connected GUI can show what actually went out.
 	updateMsg := WSMessage{
 		Type:   MsgTypeParamUpdate,
 		Effect: intPtr(int(effectID)),
 		Param:  intPtr(int(paramID)),
 		Value:  valueJSON,
 	}
+	if enc, ok := encodeParam(effectID, paramID, value); ok {
+		updateMsg.Encoding = &enc
+	}
 
 	if msgJSON, err := json.Marshal(updateMsg); err == nil {
 		s.hub.broadcast <- msgJSON
+	}
+}
+
+// handlePreview answers "what would this value encode to?" without touching the
+// device, the DSP state or the config file. It is read-only by construction:
+// encodeParam only calls the pure encoder functions.
+func (s *Server) handlePreview(client *Client, effectID, paramID byte, valueJSON json.RawMessage) {
+	var value float64
+	if err := json.Unmarshal(valueJSON, &value); err != nil {
+		s.sendError(client, "Invalid value format")
+		return
+	}
+
+	enc, ok := encodeParam(effectID, paramID, value)
+	if !ok {
+		s.sendError(client, fmt.Sprintf("Unknown effect/parameter %d/%d", effectID, paramID))
+		return
+	}
+
+	msg := WSMessage{
+		Type:     MsgTypePreview,
+		Effect:   intPtr(int(effectID)),
+		Param:    intPtr(int(paramID)),
+		Value:    valueJSON,
+		Encoding: &enc,
+	}
+	if msgJSON, err := json.Marshal(msg); err == nil {
+		client.send <- msgJSON
 	}
 }
 

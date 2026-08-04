@@ -1,1395 +1,1488 @@
-// RODE NT-USB Mini DSP Controller - Web GUI Application JavaScript
-// Real WebSocket implementation for real-time DSP control
+// RØDE NT-USB Mini — DSP control.
+//
+// The interface is generated from /api/schema, which the Go server renders from
+// the parameter registry in internal/dsp/params.go. Nothing about ranges,
+// defaults, units or encodings is written down here; a parameter added on the
+// Go side appears in the browser with no change to this file.
+//
+// Two display modes. Simple shows only what changes the sound. Advanced adds the
+// table index, the payload bytes, the full 29-byte report and the index formula
+// for each parameter — all computed server-side by the same functions that drive
+// the device, so what is shown is what was sent.
+//
+// The device has no read-back path for DSP parameters (they are write-only), so
+// the server's saved state is the only source of truth for current values.
 
-class DSPController {
+"use strict";
+
+const WS_URL = `ws://${location.host}/ws`;
+const PREVIEW_INTERVAL_MS = 40;
+const LIVE_REDRAW_MS = 50;
+
+/* ------------------------------------------------------------------ helpers */
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// Sliders are integers 0..1000 internally. Linear parameters could use their
+// own units directly, but routing both scales through one normalised position
+// keeps the mapping in a single place and lets log parameters (attack, release,
+// hold, tune) feel right instead of bunching at one end.
+const SLIDER_STEPS = 1000;
+
+// How far the time parameters' controls lean towards logarithmic. 0 is linear,
+// 1 is fully logarithmic, and the value is the exponent of a geometric blend of
+// the two mappings.
+//
+// A fully logarithmic control mirrors the encoder — compressor attack really is
+// log(ms / 0.1) / log(100) in the device's index space — but it spends four
+// fifths of its travel on the bottom decade, so the last stretch of the slider
+// covers most of the range and the parameter is hard to dial in. Fully linear
+// solves that and makes sub-millisecond attacks unreachable instead. Halfway
+// between the two keeps the small values selectable without the top of the
+// range being a cliff: compressor attack now runs 0.1, 0.7, 1.7, 3.2, 5.6,
+// 10 ms across the travel rather than 0.1, 0.25, 0.6, 1.6, 4, 10.
+const LOG_BLEND = 0.5;
+
+// curveValue is the control's position-to-value mapping, before snapping.
+function curveValue(p, t) {
+  if (p.scale === "log" && p.min > 0) {
+    const lin = p.min + t * (p.max - p.min);
+    const log = p.min * Math.pow(p.max / p.min, t);
+    return Math.pow(lin, 1 - LOG_BLEND) * Math.pow(log, LOG_BLEND);
+  }
+  return p.min + t * (p.max - p.min);
+}
+
+function toSlider(p, value) {
+  const v = clamp(value, p.min, p.max);
+  if (p.scale !== "log" || p.min <= 0) {
+    return Math.round(((v - p.min) / (p.max - p.min)) * SLIDER_STEPS);
+  }
+  // The blend has no closed-form inverse. It is monotonic, so bisecting over
+  // slider positions finds the right one in ten iterations.
+  let lo = 0;
+  let hi = SLIDER_STEPS;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (curveValue(p, mid / SLIDER_STEPS) < v) lo = mid;
+    else hi = mid;
+  }
+  const dLo = Math.abs(curveValue(p, lo / SLIDER_STEPS) - v);
+  const dHi = Math.abs(curveValue(p, hi / SLIDER_STEPS) - v);
+  return dLo <= dHi ? lo : hi;
+}
+
+// Snap to the registry's resolution so the value sent matches what is shown.
+// Rounding to the step alone leaves binary-floating-point residue —
+// Math.round(2.5 / 0.1) * 0.1 is 2.5000000000000004 — which ends up in the
+// config file, so the result is trimmed to the precision the step carries.
+function snap(p, v) {
+  const stepped = p.step > 0 ? Math.round(v / p.step) * p.step : v;
+  const dp = p.step >= 1 ? 0 : p.step >= 0.1 ? 1 : 2;
+  return clamp(Number(stepped.toFixed(dp)), p.min, p.max);
+}
+
+function fromSlider(p, pos) {
+  return snap(p, curveValue(p, pos / SLIDER_STEPS));
+}
+
+// Decimal places follow the registry's resolution, so the readout never claims
+// more precision than the parameter actually carries.
+const formatNumber = (p, v) => v.toFixed(p.step >= 1 ? 0 : p.step >= 0.1 ? 1 : 2);
+
+// The unit sits beside the editable number rather than inside it, so what the
+// field contains is exactly what can be typed back into it.
+const unitLabel = (p) => p.unit || "";
+
+// Accepts what someone would actually type: "2.5", "2.5 ms", "-13.5 dB", "3:1".
+function parseTyped(text) {
+  const m = String(text).match(/-?\d*\.?\d+/);
+  return m ? Number(m[0]) : NaN;
+}
+
+const hexPairs = (h) => (h ? h.replace(/(..)/g, "$1 ").trim() : "");
+
+/* ------------------------------------------------------- device signal maths
+ *
+ * These mirror internal/protocol/encode.go. They are here so the graphs are
+ * driven by the quantities the microphone is actually sent rather than by a
+ * shape chosen to look plausible: the gate's one-pole attack coefficient, its
+ * hold and release ramps and its hysteresis offset are the same expressions the
+ * encoder transmits, so the plotted curve moves for the reasons the device's
+ * own gate would. See docs/re/08-encoders.md.
+ */
+
+const FS = 48000; // the device runs at 48 kHz; every time constant is in samples
+
+const dbToAmp = (db) => Math.pow(10, db / 20);
+const ampToDb = (a) => (a > 1e-7 ? 20 * Math.log10(a) : -140);
+
+// Noise gate attack, FUN_1401031b0: with b = 2 - cos(w) this is 1 - (b - sqrt(b^2 - 1)),
+// the textbook one-pole time-constant design.
+function gateAttackCoef(ms) {
+  const w = 5.0 / ((ms / 1000) * FS);
+  const c = Math.cos(w);
+  return Math.sqrt(c * c - 4 * c + 3) + c - 1;
+}
+
+// Hold and release are the bare reciprocal 1/(s x 48000) — a per-sample
+// decrement, so the counter traverses its full range in exactly the stated time.
+const gateRamp = (ms) => 1 / ((ms / 1000) * FS);
+
+// Hysteresis maps 0..100% onto -1..-8 dB below the opening threshold.
+const gateHysteresisDb = (pct) => -1 - 7 * (pct / 100);
+
+// A one-pole coefficient stepped dt ms at a time, used for the compressor
+// envelope. Exact for any dt, so the plot can be drawn at a few hundred points
+// instead of at 48 kHz.
+const poleStep = (tauMs, dtMs) => (tauMs > 0 ? 1 - Math.exp(-dtMs / tauMs) : 1);
+
+/* --------------------------------------------------------- the test signal
+ *
+ * The compressor and the gate act on level over time, not on frequency, so
+ * what shows their effect is a waveform: the same passage before and after,
+ * with the difference between the two visible directly. Both run on the
+ * programme below.
+ *
+ * It is fixed rather than derived from the current settings. An earlier version
+ * moved the test signal's noise floor with the gate's threshold, which kept the
+ * picture tidy but meant dragging the threshold barely changed it. Against a
+ * fixed programme every slider has a visible consequence — including setting
+ * the threshold under the noise floor, where the gate correctly stops working.
+ */
+
+const PROGRAMME_MS = 620; // length of the phrase itself, before any tail
+const FLOOR_DB = -52; // room noise between phrases
+const SYLLABLES = [
+  { at: 0.04, len: 0.15, db: -4 },
+  { at: 0.26, len: 0.12, db: -16 },
+  { at: 0.45, len: 0.17, db: -7 },
+  { at: 0.7, len: 0.13, db: -22 },
+];
+
+// Amplitude of the programme at t in 0..1 of its length: syllables with a fast
+// onset and a decaying tail, over the noise floor.
+function programmeAmp(t) {
+  let a = dbToAmp(FLOOR_DB);
+  for (const s of SYLLABLES) {
+    if (t < s.at || t >= s.at + s.len) continue;
+    const u = (t - s.at) / s.len;
+    const shape = u < 0.1 ? u / 0.1 : Math.pow(1 - (u - 0.1) / 0.9, 0.8);
+    a = Math.max(a, dbToAmp(s.db) * shape);
+  }
+  return a;
+}
+
+// A voice-like carrier so the drawn waveform is a waveform and not a smooth
+// blob. Peak-normalised, so the programme's dB values are the real peak levels.
+const CARRIER_NORM = 1 / 1.1;
+function carrier(t) {
+  const p = 2 * Math.PI * 165 * t;
+  return CARRIER_NORM * (Math.sin(p) + 0.35 * Math.sin(2 * p + 1) + 0.18 * Math.sin(3 * p + 2));
+}
+
+// Waveforms are drawn on a dB height scale, not a linear one. At -52 dB the
+// noise floor is 0.25% of full scale and simply invisible linearly, which is
+// exactly the part of the picture the gate is there to change.
+const WAVE_FLOOR_DB = -66;
+const waveHeight = (amp) => clamp((ampToDb(amp) - WAVE_FLOOR_DB) / -WAVE_FLOOR_DB, 0, 1);
+
+// A peak detector feeding the gain computer, which is how a compressor or gate
+// decides what the level is. Instant attack, decaying over PEAK_DECAY_MS, so
+// the gain follows the syllable rather than the individual carrier cycles.
+const PEAK_DECAY_MS = 8;
+
+/* ---------------------------------------------------------- signal sourcing */
+
+// signalSource decides what the level processors run on: the microphone when
+// the level monitor is on, otherwise the synthetic phrase.
+//
+// d is device samples per simulation step, the unit the gate's coefficients are
+// expressed in. Live audio derives it from the browser's sample rate, so a
+// stream that is not at the device's 48 kHz still gets the right time
+// constants; the synthetic phrase decimates its own 48 kHz timeline to keep the
+// step count bounded when hold and release are long.
+function signalSource(p, cols, live, synthSpanMs) {
+  if (live && live.samples.length > 1) {
+    const rate = live.sampleRate || FS;
+    return {
+      live: true,
+      n: live.samples.length,
+      d: FS / rate,
+      dtMs: 1000 / rate,
+      spanMs: (live.samples.length / rate) * 1000,
+      sampleAt: (i) => live.samples[i],
+    };
+  }
+
+  const total = Math.round((synthSpanMs / 1000) * FS);
+  // Keep the step at or under 0.05 ms so even the fastest attack resolves.
+  const d = Math.max(1, Math.min(Math.floor((0.05 * FS) / 1000), Math.floor(total / 6000)) || 1);
+  const n = Math.max(2, Math.floor(total / d));
+  const dtMs = (d / FS) * 1000;
+
+  return {
+    live: false,
+    n,
+    d,
+    dtMs,
+    spanMs: synthSpanMs,
+    sampleAt: (i) => {
+      const tMs = i * dtMs;
+      return programmeAmp(tMs / PROGRAMME_MS) * carrier(tMs / 1000);
+    },
+  };
+}
+
+/* ---------------------------------------------------------- the simulations */
+
+// simulateGate runs the gate the device is configured to run, sample by sample.
+// Decimating by d is exact rather than approximate: a one-pole's pole raised to
+// the power d is the same filter observed every d samples, and the linear ramps
+// simply scale.
+function simulateGate(p, cols, live) {
+  const openAmp = dbToAmp(p.thr);
+  const closeAmp = openAmp * dbToAmp(gateHysteresisDb(p.hyst));
+  const floor = dbToAmp(p.range);
+
+  // d is device samples per simulation step, which is what the coefficients are
+  // expressed in. Live audio sets it from the browser's sample rate; the
+  // synthetic programme decimates its own 48 kHz timeline.
+  const src = signalSource(p, cols, live, 620 + p.hold + p.release * 1.15 + 80);
+  const { n, d, dtMs, spanMs, sampleAt } = src;
+
+  const aCoef = 1 - Math.pow(1 - gateAttackCoef(p.attack), d);
+  const hStep = gateRamp(p.hold) * d;
+  const rStep = gateRamp(p.release) * d;
+  const peakDecay = 1 - poleStep(PEAK_DECAY_MS, dtMs);
+
+  const inPeak = new Float32Array(cols);
+  const outPeak = new Float32Array(cols);
+  // The detector level and the gain applied to it, both recorded at the column's
+  // loudest sample. Taking them at different instants — a maximum for one and
+  // whatever happened to be last for the other — made the two level traces
+  // disagree by a few dB even with the gate wide open.
+  const envPeak = new Float32Array(cols);
+  const gainAtPeak = new Float32Array(cols);
+
+  let gain = floor;
+  let env = 0;
+  let holdLeft = 0;
+  let open = false;
+
+  for (let i = 0; i < n; i++) {
+    const x = sampleAt(i);
+    const mag = Math.abs(x);
+    env = Math.max(mag, env * peakDecay);
+
+    // Hysteresis: once open the gate stays open until the level falls below the
+    // lower closing threshold, not merely below the opening one.
+    open = open ? env > closeAmp : env > openAmp;
+
+    if (open) holdLeft = 1;
+    else if (holdLeft > 0) holdLeft -= hStep;
+
+    const target = open || holdLeft > 0 ? 1 : floor;
+    if (target > gain) gain += (target - gain) * aCoef;
+    else gain = Math.max(target, gain - rStep);
+
+    const y = x * gain;
+    const c = Math.min(cols - 1, Math.floor((i / n) * cols));
+    if (mag > inPeak[c]) inPeak[c] = mag;
+    if (Math.abs(y) > outPeak[c]) outPeak[c] = Math.abs(y);
+    if (env > envPeak[c]) {
+      envPeak[c] = env;
+      gainAtPeak[c] = gain;
+    }
+  }
+
+  const inDb = new Float32Array(cols);
+  const outDb = new Float32Array(cols);
+  for (let c = 0; c < cols; c++) {
+    inDb[c] = ampToDb(envPeak[c]);
+    outDb[c] = ampToDb(envPeak[c] * gainAtPeak[c]);
+  }
+
+  return {
+    inPeak,
+    outPeak,
+    inDb,
+    outDb,
+    spanMs,
+    live: src.live,
+    openDb: p.thr,
+    closeDb: ampToDb(closeAmp),
+  };
+}
+
+// simulateComp is the feed-forward compressor that threshold, ratio, attack,
+// release and make-up gain describe, run over the same programme.
+function simulateComp(p, cols, live) {
+  const src = signalSource(p, cols, live, 620 + Math.max(0, p.release - 120));
+  const { n, dtMs, spanMs, sampleAt } = src;
+
+  const aStep = poleStep(p.attack, dtMs);
+  const rStep = poleStep(p.release, dtMs);
+  const peakDecay = 1 - poleStep(PEAK_DECAY_MS, dtMs);
+
+  const inPeak = new Float32Array(cols);
+  const outPeak = new Float32Array(cols);
+  const grDb = new Float32Array(cols);
+
+  let gr = 0;
+  let env = 0;
+  let peakGr = 0;
+
+  for (let i = 0; i < n; i++) {
+    const x = sampleAt(i);
+    const mag = Math.abs(x);
+    env = Math.max(mag, env * peakDecay);
+
+    const level = ampToDb(env);
+    const target = level > p.thr ? (level - p.thr) * (1 - 1 / p.ratio) : 0;
+    gr += (target - gr) * (target > gr ? aStep : rStep);
+    if (gr > peakGr) peakGr = gr;
+
+    const y = x * dbToAmp(p.gain - gr);
+    const c = Math.min(cols - 1, Math.floor((i / n) * cols));
+    if (mag > inPeak[c]) inPeak[c] = mag;
+    if (Math.abs(y) > outPeak[c]) outPeak[c] = Math.abs(y);
+    if (gr > grDb[c]) grDb[c] = gr;
+  }
+
+  return { inPeak, outPeak, grDb, spanMs, peakGr, live: src.live };
+}
+
+// Aural Exciter and Big Bottom are the honest exception in this file. Their
+// corner frequency is exact — it is the number the packet carries — but the
+// device's filter topology is not recovered: ae_tune_1 and ae_tune_2 are two
+// Q31 coefficients whose meaning docs/re/08-encoders.md does not settle, and
+// Big Bottom's tune sends a bare index with no coefficient at all. So the skirt
+// is drawn as a conventional second-order shelf, which is right about which
+// part of the spectrum is touched and where it rolls off, and the caption on
+// each graph says as much.
+function shelfDb(f, corner, gainDb, side) {
+  const r = Math.pow(f / corner, 4);
+  const w = side === "low" ? 1 / (1 + r) : r / (1 + r);
+  return gainDb * w;
+}
+
+/* ------------------------------------------------------- canvas primitives */
+
+const VIZ_FONT = '10px ui-monospace, "Cascadia Mono", Consolas, monospace';
+
+function vizPalette() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (n, f) => css.getPropertyValue(n).trim() || f;
+  return {
+    accent: v("--accent", "#4c9aff"),
+    accentSoft: v("--accent-soft", "rgba(76,154,255,0.14)"),
+    grid: v("--border", "#232a35"),
+    gridStrong: v("--border-strong", "#323b49"),
+    dim: v("--text-faint", "#6b7889"),
+    text: v("--text-dim", "#9aa7b8"),
+    warn: v("--warn", "#d29922"),
+  };
+}
+
+function line(ctx, x1, y1, x2, y2, color, dash) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  if (dash) ctx.setLineDash(dash);
+  // Half-pixel offsets keep single-pixel rules from smearing across two rows.
+  ctx.beginPath();
+  ctx.moveTo(Math.round(x1) + 0.5, Math.round(y1) + 0.5);
+  ctx.lineTo(Math.round(x2) + 0.5, Math.round(y2) + 0.5);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function text(ctx, s, x, y, color, align, baseline) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.font = VIZ_FONT;
+  ctx.textAlign = align || "left";
+  ctx.textBaseline = baseline || "middle";
+  ctx.fillText(s, x, y);
+  ctx.restore();
+}
+
+// plot traces a series, optionally filling to a baseline and optionally dashed.
+function plot(ctx, n, at, color, width, fillTo, dash) {
+  ctx.save();
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const [x, y] = at(i);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  if (fillTo !== undefined) {
+    ctx.save();
+    ctx.lineTo(at(n - 1)[0], fillTo);
+    ctx.lineTo(at(0)[0], fillTo);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.globalAlpha *= 0.16;
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width || 2;
+  ctx.lineJoin = "round";
+  if (dash) ctx.setLineDash(dash);
+  ctx.stroke();
+  ctx.restore();
+}
+
+const sourceLabel = (sim) =>
+  sim.live ? "Your microphone, live," : "A test phrase";
+
+// What the browser receives has already been through the microphone's own DSP —
+// there is no way to tap the signal ahead of it — so a live picture shows what
+// these settings would do on top of whatever the device is already doing. Worth
+// saying plainly, since with the effect enabled it is being applied twice.
+const LIVE_CAVEAT = (sim) =>
+  sim.live
+    ? " The stream is the microphone's output, so the device's own processing is already in it."
+    : "";
+
+// legend names the two waveform traces, right-aligned so it clears the axis
+// labels down the left-hand edge.
+function legend(ctx, x, y, pal) {
+  ctx.save();
+  ctx.font = VIZ_FONT;
+  const gap = ctx.measureText("out").width + 8;
+  ctx.restore();
+  text(ctx, "out", x, y, pal.accent, "right");
+  text(ctx, "in", x - gap, y, pal.text, "right");
+}
+
+// drawWave draws a peak-per-column waveform mirrored about the centre of a
+// rect, the way an audio editor shows a clip.
+function drawWave(ctx, rect, peak, color, mode) {
+  const cols = peak.length;
+  const mid = rect.y + rect.h / 2;
+  const half = rect.h / 2;
+  const xAt = (c) => rect.x + (c / (cols - 1)) * rect.w;
+
+  ctx.save();
+  ctx.beginPath();
+  for (let c = 0; c < cols; c++) ctx.lineTo(xAt(c), mid - waveHeight(peak[c]) * half);
+  for (let c = cols - 1; c >= 0; c--) ctx.lineTo(xAt(c), mid + waveHeight(peak[c]) * half);
+  ctx.closePath();
+
+  if (mode === "fill") {
+    ctx.fillStyle = color;
+    ctx.globalAlpha *= 0.38;
+    ctx.fill();
+  } else {
+    ctx.fillStyle = color;
+    ctx.globalAlpha *= 0.5;
+    ctx.fill();
+    ctx.globalAlpha /= 0.5;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// The level processors carry two stacked panels and need the room; the two
+// frequency graphs are a single plot and do not. Anything absent here uses the
+// height in the stylesheet.
+const VIZ_HEIGHT = { Compressor: 182, "Noise Gate": 182 };
+
+// Second graphs, shown only in advanced mode.
+const AUX_VIZ = { Compressor: { label: "transfer curve", draw: "drawCompressorCurve" } };
+
+/* -------------------------------------------------------------- application */
+
+class App {
   constructor() {
     this.ws = null;
-    this.isConnected = false;
-    this.currentState = {};
+    this.connected = false;
+    this.schema = null;
+    this.params = new Map(); // "effectId:paramId" -> control record
+    this.effects = new Map(); // effectId -> { card, enabledInput, schema }
+    this.values = new Map(); // "effectId:paramId" -> current value
+    this.enabled = new Map(); // effectId -> bool
+    this.previewTimers = new Map();
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 2000;
+    // Live FFT of the microphone, set only while the level monitor is running.
+    // The frequency graphs draw it behind their curves so the band an effect
+    // lifts can be compared against the band the voice actually occupies.
+    this.spectrum = null;
+    // A rolling window of real samples, also only while monitoring. The
+    // compressor and gate models run over it in place of the synthetic phrase,
+    // so their sliders can be dialled in against actual speech.
+    this.liveAudio = null;
 
-    // Visualization state - synchronized with actual DSP parameters
-    this.vizState = {
-      compressor: {
-        threshold: -20,
-        ratio: 3.0,
-        attack: 0.7,
-        release: 21.0,
-        gain: 2.0,
-        enabled: true,
-        currentInput: -30,
-        currentOutput: -30,
-      },
-      gate: {
-        threshold: -42,
-        attack: 0.8,
-        hold: 80.0,
-        release: 210.0,
-        range: -9.0,
-        hysteresis: 50,
-        enabled: true,
-        currentLevel: -60,
-        levelHistory: new Array(400).fill(-60),
-      },
-      auralExciter: {
-        harmonics: 49.0,
-        tune: 3516,
-        enabled: true,
-      },
-      bigBottom: {
-        drive: 62.0,
-        tune: 131,
-        enabled: true,
-      },
-    };
-
-    // DOM Elements
+    this.statusEl = document.getElementById("status");
     this.connectBtn = document.getElementById("connect-btn");
-    this.statusDot = document.querySelector(".status-dot");
-    this.statusText = document.querySelector(".status-text");
+    this.bannerEl = document.getElementById("banner");
 
-    // WebSocket URL (use current host and port)
-    this.wsUrl = `ws://${window.location.host}/ws`;
+    this.initTheme();
+    this.initAdvanced();
+    this.initMonitor();
 
-    // Initialize
-    this.bindEvents();
-    this.initializeUI();
-  }
-
-  bindEvents() {
-    // Connect button
-    if (this.connectBtn) {
-      this.connectBtn.addEventListener("click", () => this.toggleConnection());
-    }
-
-    // Window beforeunload - clean up WebSocket
-    window.addEventListener("beforeunload", () => {
-      if (this.ws && this.isConnected) {
-        this.ws.close();
-      }
+    this.connectBtn.addEventListener("click", () => {
+      if (this.connected) this.disconnect();
+      else this.connect();
     });
+
+    window.addEventListener("beforeunload", () => this.ws && this.ws.close());
+
+    this.boot();
   }
 
-  initializeUI() {
-    // Initialize all sliders and toggles as disabled until connected
-    this.disableAllControls();
-
-    // Set up visualization canvases
-    this.initializeVisualizations();
-
-    // Set up audio monitoring placeholder
-    this.initializeAudio();
-  }
-
-  toggleConnection() {
-    if (this.isConnected) {
-      this.disconnect();
-    } else {
-      this.connect();
-    }
-  }
-
-  connect() {
-    console.log("Connecting to WebSocket server...");
-
-    // Update UI to connecting state
-    this.updateConnectionStatus("connecting");
-
+  async boot() {
     try {
-      this.ws = new WebSocket(this.wsUrl);
-
-      this.ws.onopen = () => {
-        console.log("WebSocket connection established");
-        this.isConnected = true;
-        this.reconnectAttempts = 0;
-        this.updateConnectionStatus("connected");
-
-        // Request current state from server
-        this.sendMessage({ type: "get_state" });
-
-        // Enable controls
-        this.enableAllControls();
-      };
-
-      this.ws.onmessage = (event) => {
-        this.handleMessage(event.data);
-      };
-
-      this.ws.onerror = (error) => {
-        console.error("WebSocket error:", error);
-        this.updateConnectionStatus("error");
-      };
-
-      this.ws.onclose = (event) => {
-        console.log("WebSocket connection closed:", event.code, event.reason);
-        this.isConnected = false;
-        this.updateConnectionStatus("disconnected");
-        this.disableAllControls();
-
-        // Attempt reconnection if not intentionally disconnected
-        if (
-          event.code !== 1000 &&
-          this.reconnectAttempts < this.maxReconnectAttempts
-        ) {
-          this.attemptReconnect();
-        }
-      };
-    } catch (error) {
-      console.error("Failed to create WebSocket:", error);
-      this.updateConnectionStatus("error");
-      setTimeout(() => this.updateConnectionStatus("disconnected"), 2000);
-    }
-  }
-
-  disconnect() {
-    if (this.ws) {
-      this.ws.close(1000, "User requested disconnect");
-    }
-    this.isConnected = false;
-    this.updateConnectionStatus("disconnected");
-    this.disableAllControls();
-  }
-
-  attemptReconnect() {
-    this.reconnectAttempts++;
-    console.log(
-      `Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`,
-    );
-
-    setTimeout(() => {
-      if (!this.isConnected) {
-        this.connect();
-      }
-    }, this.reconnectDelay * this.reconnectAttempts);
-  }
-
-  updateConnectionStatus(status) {
-    const statusMap = {
-      connecting: {
-        text: "CONNECTING",
-        dotClass: "loading",
-        btnText: "Connecting...",
-      },
-      connected: {
-        text: "CONNECTED",
-        dotClass: "connected",
-        btnText: "Disconnect",
-      },
-      disconnected: {
-        text: "DISCONNECTED",
-        dotClass: "disconnected",
-        btnText: "Connect",
-      },
-      error: { text: "ERROR", dotClass: "disconnected", btnText: "Connect" },
-    };
-
-    const statusInfo = statusMap[status] || statusMap.disconnected;
-
-    // Update status dot
-    this.statusDot.className = "status-dot";
-    this.statusDot.classList.add(statusInfo.dotClass);
-
-    // Update status text
-    this.statusText.textContent = statusInfo.text;
-
-    // Update connect button
-    if (this.connectBtn) {
-      this.connectBtn.textContent = statusInfo.btnText;
-      this.connectBtn.disabled = status === "connecting";
-    }
-  }
-
-  sendMessage(message) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn("WebSocket not connected, cannot send message:", message);
+      const res = await fetch("/api/schema");
+      if (!res.ok) throw new Error(`schema request failed: ${res.status}`);
+      this.schema = await res.json();
+    } catch (err) {
+      this.showBanner(`Could not load the parameter schema: ${err.message}`);
       return;
     }
 
-    try {
-      const jsonMessage = JSON.stringify(message);
-      this.ws.send(jsonMessage);
-      console.log("Sent message:", message);
-    } catch (error) {
-      console.error("Failed to send WebSocket message:", error);
-    }
+    this.renderDevice(this.schema.device);
+    this.renderEffects(this.schema.effects);
+    this.setControlsEnabled(false);
+    this.connect();
   }
 
-  handleMessage(data) {
-    // Server may batch multiple JSON messages separated by newlines
-    const lines = data.split('\n').filter(l => l.trim());
-    for (const line of lines) {
-      try {
-        const message = JSON.parse(line);
-        console.log("Received message:", message);
+  /* ---------------------------------------------------------- presentation */
 
-        switch (message.type) {
-          case "state":
-            this.handleStateMessage(message);
-            break;
-
-          case "param_update":
-            this.handleParamUpdate(message);
-            break;
-
-          case "connection_status":
-            this.handleConnectionStatus(message);
-            break;
-
-          case "error":
-            this.handleErrorMessage(message);
-            break;
-
-          default:
-            console.warn("Unknown message type:", message.type);
-        }
-      } catch (error) {
-        console.error("Failed to parse WebSocket message:", error, line);
-      }
-    }
+  initTheme() {
+    const saved = localStorage.getItem("theme");
+    if (saved) document.documentElement.dataset.theme = saved;
+    document.getElementById("theme-btn").addEventListener("click", () => {
+      const next =
+        document.documentElement.dataset.theme === "light" ? "dark" : "light";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("theme", next);
+      this.drawAll();
+    });
   }
 
-  handleStateMessage(message) {
-    // Handle full state update (with value field)
-    if (message.value) {
-      try {
-        // message.value is already a parsed object (JSON.parse was done in handleMessage)
-        const state = typeof message.value === "string"
-          ? JSON.parse(message.value)
-          : message.value;
-        this.currentState = state;
-        this.updateUIFromState(state);
-        console.log("[VALIDATE] Full state received from server:", JSON.stringify(state));
-        this._validateFullState(state);
-      } catch (error) {
-        console.error("Failed to parse state:", error);
-      }
-    }
-    // Handle partial enable update (from set_enable responses)
-    else if (message.effect !== undefined && message.enabled !== undefined) {
-      // Update current state
-      if (!this.currentState.enabled) this.currentState.enabled = {};
-      this.currentState.enabled[message.effect] = message.enabled;
+  initAdvanced() {
+    const toggle = document.getElementById("advanced-toggle");
+    const on = localStorage.getItem("advanced") === "1";
+    toggle.checked = on;
+    this.applyAdvanced(on);
 
-      // Validate against what we sent
-      if (this._pendingEnableSet) {
-        const p = this._pendingEnableSet;
-        if (p.effect === message.effect && p.enabled === message.enabled) {
-          console.log(`[VALIDATE] ✓ effect ${message.effect} enabled=${message.enabled} confirmed`);
-        } else {
-          console.warn(`[VALIDATE] ✗ MISMATCH: sent effect=${p.effect} enabled=${p.enabled}, got effect=${message.effect} enabled=${message.enabled}`);
-        }
-        this._pendingEnableSet = null;
-      }
-
-      // Update UI for this specific effect
-      this.updateEffectEnabled(message.effect, message.enabled);
-      console.log(
-        `Updated effect ${message.effect} enabled: ${message.enabled}`,
-      );
-    }
+    toggle.addEventListener("change", (e) => {
+      this.applyAdvanced(e.target.checked);
+      localStorage.setItem("advanced", e.target.checked ? "1" : "0");
+      // Encoding details are only fetched while advanced is on, so fill them in
+      // the moment it is switched on rather than waiting for the next drag.
+      if (e.target.checked) this.refreshAllEncodings();
+    });
   }
 
-  _validateFullState(state) {
-    const effectNames = ["Compressor", "Noise Gate", "Aural Exciter", "Big Bottom"];
-    if (state.enabled) {
-      for (const [k, v] of Object.entries(state.enabled)) {
-        console.log(`[VALIDATE]   effect ${k} (${effectNames[k] || k}): enabled=${v}`);
-      }
-    }
-    if (state.params) {
-      for (const [key, value] of Object.entries(state.params)) {
-        const [eff, param] = key.split("_");
-        console.log(`[VALIDATE]   param ${key} (eff=${eff} param=${param}): ${value}`);
-      }
-    }
+  applyAdvanced(on) {
+    document.body.toggleAttribute("data-advanced", on);
+    document.getElementById("device-panel").hidden = !on;
+    // Advanced-only graphs have no layout while hidden, so they can only be
+    // drawn once the attribute is set.
+    this.drawAll();
   }
 
-  handleParamUpdate(message) {
-    // Update individual parameter
-    const { effect, param, value } = message;
-
-    if (effect !== undefined && param !== undefined && value !== undefined) {
-      // Validate against what we sent
-      if (this._pendingParamSet) {
-        const p = this._pendingParamSet;
-        if (p.effect === effect && p.param === param) {
-          const delta = Math.abs(p.value - value);
-          if (delta < 0.01) {
-            console.log(`[VALIDATE] ✓ param eff=${effect} param=${param} value=${value} confirmed`);
-          } else {
-            console.warn(`[VALIDATE] ✗ MISMATCH: sent value=${p.value}, server echo=${value} (delta=${delta.toFixed(4)}, likely snapped to resolution)`);
-          }
-        }
-        this._pendingParamSet = null;
-      }
-
-      // Update current state
-      if (!this.currentState.params) this.currentState.params = {};
-      if (!this.currentState.params[effect])
-        this.currentState.params[effect] = {};
-      this.currentState.params[effect][param] = value;
-
-      // Update UI for this specific parameter
-      this.updateParameterUI(effect, param, value);
-    }
+  setStatus(state, text) {
+    this.statusEl.dataset.state = state;
+    this.statusEl.querySelector(".status-text").textContent = text;
   }
 
-  handleConnectionStatus(message) {
-    if (message.enabled !== undefined) {
-      this.updateConnectionStatus(
-        message.enabled ? "connected" : "disconnected",
-      );
-    }
+  showBanner(msg) {
+    this.bannerEl.textContent = msg;
+    this.bannerEl.hidden = false;
   }
 
-  handleErrorMessage(message) {
-    console.error("Server error:", message.error);
-    this.showNotification(`Error: ${message.error}`, "error");
+  hideBanner() {
+    this.bannerEl.hidden = true;
   }
 
-  updateUIFromState(state) {
-    // Update enabled states
-    if (state.enabled) {
-      for (const [effectId, enabled] of Object.entries(state.enabled)) {
-        this.updateEffectEnabled(parseInt(effectId), enabled);
-      }
-    }
-
-    // Update parameter values (flat "effectId_paramId" keys from Go server)
-    if (state.params) {
-      for (const [key, value] of Object.entries(state.params)) {
-        const parts = key.split("_");
-        if (parts.length === 2) {
-          this.updateParameterUI(parseInt(parts[0]), parseInt(parts[1]), value);
-        }
-      }
-    }
-  }
-
-  updateEffectEnabled(effectId, enabled) {
-    // Find the toggle for this effect
-    const effectPanels = document.querySelectorAll(".effect-panel");
-    if (effectId < effectPanels.length) {
-      const toggle = effectPanels[effectId].querySelector(".toggle input");
-      if (toggle) {
-        toggle.checked = enabled;
-      }
-
-      // Update visualization state
-      this.updateVizEnable(effectId, enabled);
-    }
-  }
-
-  updateVizEnable(effectId, enabled) {
-    // Update visualization state enabled flag
-    const effectNames = ["compressor", "gate", "auralExciter", "bigBottom"];
-    if (effectId >= 0 && effectId < effectNames.length) {
-      const effectName = effectNames[effectId];
-      if (this.vizState[effectName]) {
-        this.vizState[effectName].enabled = enabled;
-        console.log(`Updated vizState.${effectName}.enabled = ${enabled}`);
-
-        // Special handling for compressor enabled state
-        if (effectName === "compressor") {
-          if (!enabled) {
-            // When compressor is disabled, output equals input (no compression)
-            this.vizState.compressor.currentOutput =
-              this.vizState.compressor.currentInput;
-            console.log(
-              `Compressor disabled: output = input (${this.vizState.compressor.currentOutput}dB)`,
-            );
-          } else {
-            // When compressor is enabled, recalculate output with current parameters
-            const input = this.vizState.compressor.currentInput;
-            const threshold = this.vizState.compressor.threshold;
-            const ratio = this.vizState.compressor.ratio;
-            const gain = this.vizState.compressor.gain;
-            this.vizState.compressor.currentOutput =
-              this.calculateCompressorOutput(input, threshold, ratio, gain);
-            console.log(
-              `Compressor enabled: ${input}dB -> ${this.vizState.compressor.currentOutput}dB (gain: ${gain}dB)`,
-            );
-          }
-        }
-
-        this.updateVisualizations();
-      }
-    }
-  }
-
-  updateParameterUI(effectId, paramId, value) {
-    // Find the parameter element for this effect and parameter
-    const effectPanels = document.querySelectorAll(".effect-panel");
-    if (effectId < effectPanels.length) {
-      const params = effectPanels[effectId].querySelectorAll(".param");
-      if (paramId <= params.length) {
-        const param = params[paramId - 1]; // paramId is 1-based in UI
-
-        // Update value display
-        const valueSpan = param.querySelector(".value");
-        if (valueSpan) {
-          // Format value based on parameter type
-          valueSpan.textContent = this.formatValue(effectId, paramId, value);
-        }
-
-        // Update slider (log-scale sliders need inverse conversion)
-        const slider = param.querySelector('input[type="range"]');
-        if (slider) {
-          slider.value = this.paramToSlider(slider, value);
-        }
-
-        // Update hex display (calculate from value)
-        const hexDiv = param.querySelector(".hex");
-        if (hexDiv) {
-          const hexValue = this.calculateHexValue(effectId, paramId, value);
-          hexDiv.textContent = `Hex: ${hexValue}`;
-        }
-
-        // Update visualization state
-        this.updateVizParam(effectId, paramId, value);
-      }
-    }
-  }
-
-  updateVizParam(effectId, paramId, value) {
-    // Update visualization state based on parameter changes
-    const effectNames = ["compressor", "gate", "auralExciter", "bigBottom"];
-    const paramNames = [
-      ["threshold", "ratio", "attack", "release", "gain"],
-      ["threshold", "attack", "hold", "release", "range", "hysteresis"],
-      ["harmonics", "tune"],
-      ["drive", "tune"],
+  renderDevice(d) {
+    const dl = document.getElementById("device-facts");
+    dl.textContent = "";
+    const facts = [
+      ["Vendor", d.vid],
+      ["Product", d.pid],
+      ["Report ID", d.reportId],
+      ["Report size", `${d.packetSize} bytes`],
+      ["Coefficient scale", d.scale],
     ];
-
-    if (effectId >= 0 && effectId < effectNames.length) {
-      const effectName = effectNames[effectId];
-      if (paramId >= 1 && paramId <= paramNames[effectId].length) {
-        const paramName = paramNames[effectId][paramId - 1];
-
-        // Update the visualization state
-        if (this.vizState[effectName]) {
-          this.vizState[effectName][paramName] = value;
-          console.log(`Updated vizState.${effectName}.${paramName} = ${value}`);
-
-          // Special handling for specific parameter changes
-          if (effectName === "compressor") {
-            if (
-              paramName === "threshold" ||
-              paramName === "ratio" ||
-              paramName === "gain"
-            ) {
-              // Recalculate compressor output when threshold, ratio, or gain changes
-              const input = this.vizState.compressor.currentInput;
-              const threshold = this.vizState.compressor.threshold;
-              const ratio = this.vizState.compressor.ratio;
-              const gain = this.vizState.compressor.gain;
-              this.vizState.compressor.currentOutput =
-                this.calculateCompressorOutput(input, threshold, ratio, gain);
-              console.log(
-                `Recalculated compressor output: ${input}dB -> ${this.vizState.compressor.currentOutput}dB (gain: ${gain}dB)`,
-              );
-            }
-          } else if (effectName === "gate") {
-            if (paramName === "threshold") {
-              // Simulate some audio level variation when threshold changes
-              // Just add a small random variation to make visualization more interesting
-              const variation = (Math.random() - 0.5) * 5;
-              this.vizState.gate.currentLevel = value + variation;
-            }
-          }
-        }
-
-        // Trigger visualization updates
-        this.updateVisualizations();
-      }
+    for (const [k, v] of facts) {
+      const wrap = el("div");
+      wrap.append(el("dt", null, k), el("dd", null, v));
+      dl.append(wrap);
     }
+    document.getElementById("device-note").textContent =
+      `Encodings transcribed from ${d.source}. DSP parameters are write-only: ` +
+      `the microphone cannot be asked what it currently holds, so the values ` +
+      `shown are the ones this server last sent.`;
   }
 
-  updateVisualizations() {
-    // Visualization draw functions read from this.vizState on every animation frame
-    // Changes to vizState will be automatically reflected on the next frame render
-    // No explicit redraw needed due to continuous requestAnimationFrame loops
+  renderEffects(effects) {
+    const host = document.getElementById("effects");
+    host.textContent = "";
+
+    for (const eff of effects) {
+      const card = el("section", "card");
+      card.dataset.enabled = "false";
+
+      // --- header: name, id chip, reset, enable switch
+      const head = el("div", "card-head");
+      head.append(el("h2", null, eff.name));
+
+      const idChip = el("span", "card-id adv-only", `effect 0x${eff.id.toString(16).padStart(2, "0")}`);
+      head.append(idChip);
+
+      const reset = el("button", "btn btn-ghost", "Reset");
+      reset.addEventListener("click", () => this.send({ type: "reset_defaults", effect: eff.id }));
+      head.append(reset);
+
+      const sw = el("label", "effect-switch switch-inline");
+      sw.title = `Enable ${eff.name}`;
+      const swInput = el("input");
+      swInput.type = "checkbox";
+      const track = el("span", "switch-track");
+      track.append(el("span", "switch-thumb"));
+      sw.append(swInput, track);
+      swInput.addEventListener("change", (e) =>
+        this.send({ type: "set_enable", effect: eff.id, enabled: e.target.checked })
+      );
+      head.append(sw);
+      card.append(head);
+
+      // --- body: visualisation then parameters
+      const body = el("div", "card-body");
+
+      const figure = el("figure", "viz-figure");
+      const canvas = el("canvas", "viz");
+      canvas.setAttribute("role", "img");
+      canvas.setAttribute("aria-label", `${eff.name} response`);
+      if (VIZ_HEIGHT[eff.name]) canvas.style.height = `${VIZ_HEIGHT[eff.name]}px`;
+      figure.append(canvas);
+
+      // A second graph, advanced mode only, where one effect has a view worth
+      // showing that does not belong in the main picture.
+      let aux = null;
+      if (AUX_VIZ[eff.name]) {
+        aux = el("canvas", "viz viz-aux adv-only");
+        aux.setAttribute("role", "img");
+        aux.setAttribute("aria-label", `${eff.name} ${AUX_VIZ[eff.name].label}`);
+        figure.append(aux);
+      }
+
+      const caption = el("figcaption", "viz-caption");
+      figure.append(caption);
+      body.append(figure);
+
+      for (const p of eff.params) body.append(this.renderParam(eff, p));
+
+      card.append(body);
+      host.append(card);
+
+      this.effects.set(eff.id, { card, enabledInput: swInput, schema: eff, canvas, aux, caption, reset });
+    }
+
+    this.drawAll();
+    window.addEventListener("resize", () => this.drawAll());
   }
 
-  formatValue(effectId, paramId, value) {
-    // Format values based on parameter type
-    const formats = {
-      // Compressor (effectId: 0)
-      "0_1": (v) => `${v.toFixed(1)} dB`, // Threshold
-      "0_2": (v) => `${v.toFixed(1)}:1`, // Ratio
-      "0_3": (v) => `${v.toFixed(2)} ms`, // Attack
-      "0_4": (v) => `${v.toFixed(1)} ms`, // Release
-      "0_5": (v) => `${v.toFixed(1)} dB`, // Gain
+  renderParam(eff, p) {
+    const key = `${eff.id}:${p.id}`;
+    const wrap = el("div", "param");
 
-      // Noise Gate (effectId: 1)
-      "1_1": (v) => `${v.toFixed(1)} dB`, // Threshold
-      "1_2": (v) => `${v.toFixed(2)} ms`, // Attack
-      "1_3": (v) => `${v.toFixed(1)} ms`, // Hold
-      "1_4": (v) => `${v.toFixed(1)} ms`, // Release
-      "1_5": (v) => `${v.toFixed(1)} dB`, // Range
-      "1_6": (v) => `${v.toFixed(0)}%`, // Hysteresis
+    const head = el("div", "param-head");
+    head.append(el("span", "param-name", p.name));
 
-      // Aural Exciter (effectId: 2)
-      "2_1": (v) => `${v.toFixed(1)}%`, // Harmonics
-      "2_2": (v) => `${v.toFixed(0)} Hz`, // Tune
+    // The readout is a field, not a label. However well the slider's curve is
+    // chosen, some values are easier to say than to find, and typing 2.5 is
+    // the direct way to ask for 2.5.
+    const entry = el("span", "param-entry");
+    const valueEl = el("input", "param-input");
+    valueEl.type = "text";
+    valueEl.inputMode = "decimal";
+    valueEl.autocomplete = "off";
+    valueEl.spellcheck = false;
+    valueEl.value = "—";
+    valueEl.disabled = true;
+    valueEl.setAttribute("aria-label", `${eff.name} ${p.name} value`);
+    entry.append(valueEl);
+    const unit = unitLabel(p);
+    // ":1" and "%" are written hard against the number; "dB", "ms" and "Hz"
+    // take a space, as they do everywhere else in the interface.
+    if (unit) {
+      const tight = unit === ":1" || unit === "%";
+      entry.append(el("span", `param-unit${tight ? " param-unit-tight" : ""}`, unit));
+    }
+    head.append(entry);
+    wrap.append(head);
 
-      // Big Bottom (effectId: 3)
-      "3_1": (v) => `${v.toFixed(1)}%`, // Drive
-      "3_2": (v) => `${v.toFixed(0)} Hz`, // Tune
+    const slider = el("input");
+    slider.type = "range";
+    slider.min = 0;
+    slider.max = SLIDER_STEPS;
+    slider.step = 1;
+    slider.disabled = true;
+    slider.setAttribute("aria-label", `${eff.name} ${p.name}`);
+    wrap.append(slider);
+
+    const detail = el("div", "detail");
+    wrap.append(detail);
+
+    const rec = { eff, p, slider, valueEl, detail, encoding: null };
+    this.params.set(key, rec);
+
+    const shown = () => this.values.get(key) ?? p.default;
+
+    // Set a value from somewhere other than the slider — typing, or a key —
+    // and write it through to the device.
+    const commit = (raw) => {
+      const v = snap(p, raw);
+      this.values.set(key, v);
+      valueEl.value = formatNumber(p, v);
+      slider.value = toSlider(p, v);
+      this.draw(eff.id);
+      this.queuePreview(eff.id, p.id, v);
+      this.send({ type: "set_param", effect: eff.id, param: p.id, value: v });
     };
 
-    const key = `${effectId}_${paramId}`;
-    return formats[key] ? formats[key](value) : value.toString();
+    // Dragging updates the readout and asks the server what the value would
+    // encode to, but does not write to the device. The commit happens on
+    // change, which is when the device and the config file are touched.
+    slider.addEventListener("input", () => {
+      const v = fromSlider(p, Number(slider.value));
+      this.values.set(key, v);
+      valueEl.value = formatNumber(p, v);
+      this.draw(eff.id);
+      this.queuePreview(eff.id, p.id, v);
+    });
+
+    slider.addEventListener("change", () => {
+      const v = fromSlider(p, Number(slider.value));
+      this.send({ type: "set_param", effect: eff.id, param: p.id, value: v });
+    });
+
+    // Arrow keys step by the parameter's own resolution. The native behaviour
+    // steps by one slider position, which near the bottom of a curved range is
+    // far less than one resolution step and so does nothing at all.
+    const KEY_STEPS = {
+      ArrowUp: 1,
+      ArrowRight: 1,
+      ArrowDown: -1,
+      ArrowLeft: -1,
+      PageUp: 10,
+      PageDown: -10,
+    };
+    const stepKey = (e) => {
+      const n = KEY_STEPS[e.key];
+      if (n === undefined) return false;
+      e.preventDefault();
+      commit(shown() + n * (p.step || 1));
+      return true;
+    };
+
+    slider.addEventListener("keydown", stepKey);
+
+    valueEl.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        valueEl.value = formatNumber(p, shown());
+        valueEl.blur();
+        return;
+      }
+      if (e.key === "Enter") {
+        valueEl.blur(); // fires change below
+        return;
+      }
+      stepKey(e);
+    });
+
+    // change covers both Enter and losing focus.
+    valueEl.addEventListener("change", () => {
+      const n = parseTyped(valueEl.value);
+      if (Number.isFinite(n)) commit(n);
+      else valueEl.value = formatNumber(p, shown());
+    });
+
+    valueEl.addEventListener("focus", () => valueEl.select());
+
+    return wrap;
   }
 
-  calculateHexValue(effectId, paramId, value) {
-    // Simplified hex calculation - in real implementation this would
-    // match the Go encoding functions
-    const effectNames = [
-      "Compressor",
-      "Noise Gate",
-      "Aural Exciter",
-      "Big Bottom",
-    ];
-    const paramNames = [
-      ["Threshold", "Ratio", "Attack", "Release", "Gain"],
-      ["Threshold", "Attack", "Hold", "Release", "Range", "Hysteresis"],
-      ["Harmonics", "Tune"],
-      ["Drive", "Tune"],
-    ];
+  renderDetail(rec) {
+    const { p, detail, encoding } = rec;
+    detail.textContent = "";
 
-    if (
-      effectId < effectNames.length &&
-      paramId <= paramNames[effectId].length
-    ) {
-      return `0x${Math.round(value * 1000)
-        .toString(16)
-        .toUpperCase()
-        .padStart(8, "0")}`;
-    }
+    const row = (k, v, cls) => {
+      const r = el("div", "detail-row");
+      r.append(el("span", "detail-key", k));
+      const val = el("span", "detail-val" + (cls ? " " + cls : ""), v);
+      r.append(val);
+      detail.append(r);
+    };
 
-    return "0x00000000";
-  }
+    row("param", `0x${p.id.toString(16).padStart(2, "0")}`);
 
-  calculateCompressorOutput(inputDb, threshold, ratio, gain = 0) {
-    // Calculate compressor output based on input, threshold, ratio, and gain
-    // Basic compressor algorithm: output = input when input <= threshold
-    // output = threshold + (input - threshold) / ratio when input > threshold
-    // Then apply makeup gain
-
-    let outputDb;
-    if (inputDb <= threshold) {
-      // Below threshold: no compression (1:1 ratio)
-      outputDb = inputDb;
+    if (encoding) {
+      if (encoding.index >= 0) {
+        row("index", `${encoding.index} / 255`);
+      }
+      row("payload", `${hexPairs(encoding.hex)}  (${encoding.bytes} B)`);
+      row("report", hexPairs(encoding.packet));
     } else {
-      // Above threshold: apply compression
-      const aboveThreshold = inputDb - threshold;
-      const compressed = aboveThreshold / ratio;
-      outputDb = threshold + compressed;
+      row("payload", "—");
     }
 
-    // Apply makeup gain
-    return outputDb + gain;
-  }
+    if (p.table) row("table", p.table);
 
-  disableAllControls() {
-    // Disable all sliders
-    document.querySelectorAll('input[type="range"]').forEach((slider) => {
-      slider.disabled = true;
-    });
-
-    // Disable all toggles
-    document.querySelectorAll(".toggle input").forEach((toggle) => {
-      toggle.disabled = true;
-    });
-
-    // Disable all reset buttons
-    document.querySelectorAll(".btn.reset").forEach((btn) => {
-      btn.disabled = true;
-    });
-  }
-
-  enableAllControls() {
-    // Enable all sliders and add event listeners
-    document
-      .querySelectorAll('input[type="range"]')
-      .forEach((slider, index) => {
-        slider.disabled = false;
-
-        // Remove existing listeners and add new ones
-        slider.oninput = null;
-        slider.onchange = null;
-
-        slider.addEventListener("input", (e) => {
-          this.handleSliderChange(e.target);
-        });
-
-        slider.addEventListener("change", (e) => {
-          this.handleSliderCommit(e.target);
-        });
-      });
-
-    // Enable all toggles and add event listeners
-    const effectPanelsForToggle = Array.from(document.querySelectorAll(".effect-panel"));
-    document.querySelectorAll(".toggle input").forEach((toggle) => {
-      toggle.disabled = false;
-
-      toggle.onchange = null;
-      toggle.addEventListener("change", (e) => {
-        const panel = e.target.closest(".effect-panel");
-        const effectIndex = effectPanelsForToggle.indexOf(panel);
-        if (effectIndex === -1) {
-          console.warn("Toggle outside effect-panel — ignoring", e.target);
-          return;
-        }
-        this.handleToggleChange(e.target, effectIndex);
-      });
-    });
-
-    // Enable all reset buttons and add event listeners
-    document.querySelectorAll(".btn.reset").forEach((btn, index) => {
-      btn.disabled = false;
-
-      btn.onclick = null;
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        this.handleResetDefaults(index);
-      });
-    });
-  }
-
-  // Convert slider position → actual param value (handles log-scale sliders)
-  sliderToParam(slider) {
-    const raw = parseFloat(slider.value);
-    const sMin = parseFloat(slider.min);
-    const sMax = parseFloat(slider.max);
-    const t = (raw - sMin) / (sMax - sMin);
-
-    if (slider.dataset.scale === "log") {
-      const pMin = parseFloat(slider.dataset.paramMin);
-      const pMax = parseFloat(slider.dataset.paramMax);
-      return pMin * Math.pow(pMax / pMin, t);
-    }
-
-    if (slider.dataset.scale === "neglog") {
-      // Logarithmic scale for negative-dB params (e.g. Range -100 to 0).
-      // t=0 → most negative (pParamMin), t=1 → closest to 0 (-pNegmax).
-      // Formula: absVal = pMaxAbs * (pMinAbs / pMaxAbs)^t
-      const pMaxAbs = Math.abs(parseFloat(slider.dataset.paramMin)); // e.g. 100
-      const pMinAbs = parseFloat(slider.dataset.paramNegmax);        // e.g. 0.5
-      const absVal = pMaxAbs * Math.pow(pMinAbs / pMaxAbs, t);
-      return -absVal;
-    }
-
-    return raw;
-  }
-
-  // Convert actual param value → slider position (inverse of above)
-  paramToSlider(slider, paramValue) {
-    const sMin = parseFloat(slider.min);
-    const sMax = parseFloat(slider.max);
-
-    if (slider.dataset.scale === "log") {
-      const pMin = parseFloat(slider.dataset.paramMin);
-      const pMax = parseFloat(slider.dataset.paramMax);
-      const t = Math.log(paramValue / pMin) / Math.log(pMax / pMin);
-      return sMin + t * (sMax - sMin);
-    }
-
-    if (slider.dataset.scale === "neglog") {
-      const pMaxAbs = Math.abs(parseFloat(slider.dataset.paramMin));
-      const pMinAbs = parseFloat(slider.dataset.paramNegmax);
-      const absVal = Math.max(pMinAbs, Math.min(pMaxAbs, -paramValue));
-      const t = Math.log(absVal / pMaxAbs) / Math.log(pMinAbs / pMaxAbs);
-      return sMin + t * (sMax - sMin);
-    }
-
-    return paramValue;
-  }
-
-  handleSliderChange(slider) {
-    // Update value display in real-time during drag
-    const param = slider.closest(".param");
-    if (param) {
-      const valueSpan = param.querySelector(".value");
-      if (valueSpan) {
-        // Parse effect and param from DOM structure
-        const effectPanel = slider.closest(".effect-panel");
-        const effectIndex = Array.from(
-          document.querySelectorAll(".effect-panel"),
-        ).indexOf(effectPanel);
-        const paramIndex = Array.from(
-          effectPanel.querySelectorAll(".param"),
-        ).indexOf(param);
-
-        const value = this.sliderToParam(slider);
-        valueSpan.textContent = this.formatValue(
-          effectIndex,
-          paramIndex + 1,
-          value,
-        );
-
-        // Update hex display
-        const hexDiv = param.querySelector(".hex");
-        if (hexDiv) {
-          const hexValue = this.calculateHexValue(
-            effectIndex,
-            paramIndex + 1,
-            value,
-          );
-          hexDiv.textContent = `Hex: ${hexValue}`;
-        }
-
-        // Update visualization state in real-time
-        this.updateVizParam(effectIndex, paramIndex + 1, value);
-      }
+    if (p.formula) {
+      const f = el("div", "detail-formula", p.formula);
+      detail.append(f);
     }
   }
 
-  handleSliderCommit(slider) {
-    // Send update to server when slider is released
-    const param = slider.closest(".param");
-    if (param) {
-      const effectPanel = slider.closest(".effect-panel");
-      const effectIndex = Array.from(
-        document.querySelectorAll(".effect-panel"),
-      ).indexOf(effectPanel);
-      const paramIndex = Array.from(
-        effectPanel.querySelectorAll(".param"),
-      ).indexOf(param);
+  /* ------------------------------------------------------------- transport */
 
-      const value = this.sliderToParam(slider);
-
-      // Track pending param for validation
-      this._pendingParamSet = { effect: effectIndex, param: paramIndex + 1, value };
-
-      this.sendMessage({
-        type: "set_param",
-        effect: effectIndex,
-        param: paramIndex + 1, // Convert to 1-based
-        value: value,
-      });
-
-      console.log(
-        `[VALIDATE] set_param sent: effect=${effectIndex}, param=${paramIndex + 1}, value=${value}`,
-      );
+  connect() {
+    this.setStatus("connecting", "Connecting");
+    try {
+      this.ws = new WebSocket(WS_URL);
+    } catch (err) {
+      this.setStatus("error", "Failed");
+      this.showBanner(`WebSocket could not be opened: ${err.message}`);
+      return;
     }
-  }
 
-  handleToggleChange(toggle, effectIndex) {
-    const enabled = toggle.checked;
-
-    // Update visualization immediately
-    this.updateVizEnable(effectIndex, enabled);
-
-    // Track what we expect the server to confirm
-    this._pendingEnableSet = { effect: effectIndex, enabled };
-
-    this.sendMessage({
-      type: "set_enable",
-      effect: effectIndex,
-      enabled: enabled,
-    });
-
-    console.log(
-      `[VALIDATE] set_enable sent: effect=${effectIndex}, enabled=${enabled}`,
-    );
-  }
-
-  handleResetDefaults(effectIndex) {
-    this.sendMessage({
-      type: "reset_defaults",
-      effect: effectIndex,
-    });
-
-    console.log(`Reset defaults sent: effect=${effectIndex}`);
-    this.showNotification(
-      `Reset ${this.getEffectName(effectIndex)} to defaults`,
-      "info",
-    );
-  }
-
-  getEffectName(effectIndex) {
-    const names = ["Compressor", "Noise Gate", "Aural Exciter", "Big Bottom"];
-    return names[effectIndex] || `Effect ${effectIndex}`;
-  }
-
-  showNotification(message, type = "info") {
-    // Create notification element
-    const notification = document.createElement("div");
-    notification.className = `notification ${type}`;
-    notification.textContent = message;
-    notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 12px 20px;
-            background: ${type === "error" ? "#F44336" : type === "success" ? "#4CAF50" : "#2196F3"};
-            color: white;
-            border-radius: 6px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            z-index: 1000;
-            animation: slideIn 0.3s ease;
-        `;
-
-    document.body.appendChild(notification);
-
-    // Remove after 3 seconds
-    setTimeout(() => {
-      notification.style.animation = "slideOut 0.3s ease";
-      setTimeout(() => {
-        if (notification.parentNode) {
-          notification.parentNode.removeChild(notification);
-        }
-      }, 300);
-    }, 3000);
-
-    // Add CSS animations if not already present
-    if (!document.getElementById("notification-styles")) {
-      const style = document.createElement("style");
-      style.id = "notification-styles";
-      style.textContent = `
-                @keyframes slideIn {
-                    from { transform: translateX(100%); opacity: 0; }
-                    to { transform: translateX(0); opacity: 1; }
-                }
-                @keyframes slideOut {
-                    from { transform: translateX(0); opacity: 1; }
-                    to { transform: translateX(100%); opacity: 0; }
-                }
-            `;
-      document.head.appendChild(style);
-    }
-  }
-
-  resizeCanvas(canvas) {
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    const cssW = Math.round(rect.width);
-    const cssH = Math.round(rect.height);
-    const w = cssW * dpr;
-    const h = cssH * dpr;
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-      canvas._cssWidth = cssW;
-      canvas._cssHeight = cssH;
-      canvas._dpr = dpr;
-      const ctx = canvas.getContext("2d");
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-  }
-
-  resizeAllCanvases() {
-    ["comp-viz", "gate-viz", "eq-viz"].forEach(id => {
-      const c = document.getElementById(id);
-      if (c) this.resizeCanvas(c);
-    });
-  }
-
-  initializeVisualizations() {
-    this.resizeAllCanvases();
-
-    // Initialize gate visualization
-    this.initGateVisualization();
-
-    // Initialize compressor visualization
-    this.initCompressorVisualization();
-
-    // Initialize EQ visualization
-    this.initEQVisualization();
-
-    // Resize canvases on window resize (debounced)
-    let resizeTimer;
-    window.addEventListener("resize", () => {
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => this.resizeAllCanvases(), 100);
-    });
-  }
-
-  initGateVisualization() {
-    const canvas = document.getElementById("gate-viz");
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-
-    const ML = 36, MR = 8, MT = 8, MB = 22; // margins
-
-    const draw = () => {
-      const W = canvas._cssWidth || canvas.width, H = canvas._cssHeight || canvas.height;
-      const PW = W - ML - MR, PH = H - MT - MB;
-      const g = this.vizState.gate;
-      const minDb = -60, maxDb = 0;
-
-      const dbToY = (db) => MT + PH * (1 - (db - minDb) / (maxDb - minDb));
-
-      // Background
-      ctx.fillStyle = "#0d0d0d";
-      ctx.fillRect(0, 0, W, H);
-
-      // Grid
-      ctx.lineWidth = 1;
-      [-12, -24, -36, -48].forEach((db) => {
-        const y = dbToY(db);
-        ctx.strokeStyle = "#222";
-        ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + PW, y); ctx.stroke();
-        ctx.fillStyle = "#444";
-        ctx.font = "9px monospace";
-        ctx.textAlign = "right";
-        ctx.fillText(db, ML - 4, y + 3);
-      });
-      // 0 dB label
-      ctx.fillStyle = "#444"; ctx.textAlign = "right";
-      ctx.fillText("0", ML - 4, dbToY(0) + 3);
-
-      // Threshold (open) line
-      const tY = dbToY(g.threshold);
-      ctx.strokeStyle = g.enabled ? "#aaff00" : "#555";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath(); ctx.moveTo(ML, tY); ctx.lineTo(ML + PW, tY); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = g.enabled ? "#aaff00" : "#555";
-      ctx.font = "9px monospace"; ctx.textAlign = "left";
-      ctx.fillText(`open ${g.threshold.toFixed(1)} dB`, ML + PW - 80, tY - 3);
-
-      // Hysteresis: close threshold line below the open threshold
-      const hystDb = (g.hysteresis / 100) * 6;
-      const closeThreshold = g.threshold - hystDb;
-      const hY = dbToY(closeThreshold);
-      ctx.strokeStyle = g.enabled ? "#557722" : "#333";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 4]);
-      ctx.beginPath(); ctx.moveTo(ML, hY); ctx.lineTo(ML + PW, hY); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = g.enabled ? "#557722" : "#333";
-      ctx.fillText(`close ${closeThreshold.toFixed(1)} dB`, ML + PW - 92, hY + 10);
-
-      // Scrolling level history — draw each segment with correct colour applied before stroke
-      const hist = g.levelHistory;
-      const step = PW / hist.length;
-      ctx.lineWidth = 1.5;
-      let segStart = 0;
-      for (let i = 1; i <= hist.length; i++) {
-        const prevOpen = g.enabled && hist[i - 1] > g.threshold;
-        const currOpen = i < hist.length ? (g.enabled && hist[i] > g.threshold) : !prevOpen;
-        if (currOpen !== prevOpen) {
-          ctx.beginPath();
-          ctx.strokeStyle = prevOpen ? "#aaff00" : "#444";
-          for (let j = segStart; j <= i - 1; j++) {
-            const x = ML + j * step;
-            const y = dbToY(hist[j]);
-            j === segStart ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-          }
-          ctx.stroke();
-          segStart = i - 1;
-        }
-      }
-
-      // Current level dot at right edge
-      const curY = dbToY(g.currentLevel);
-      const gateOpen = g.enabled && g.currentLevel > g.threshold;
-      ctx.fillStyle = gateOpen ? "#aaff00" : "#e74c3c";
-      ctx.beginPath();
-      ctx.arc(ML + PW - 4, curY, 4, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Axes
-      ctx.strokeStyle = "#333";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(ML, MT); ctx.lineTo(ML, MT + PH);
-      ctx.lineTo(ML + PW, MT + PH);
-      ctx.stroke();
-
-      // Info text (top-left, compact)
-      ctx.font = "10px monospace";
-      ctx.textAlign = "left";
-      ctx.fillStyle = g.enabled ? "#aaff00" : "#555";
-      ctx.fillText(`GATE ${g.enabled ? "ON" : "OFF"}`, ML + 4, MT + 12);
-      ctx.fillStyle = "#666";
-      ctx.fillText(`${g.currentLevel.toFixed(1)} dBFS`, ML + 4, MT + 24);
-
-      requestAnimationFrame(draw.bind(this));
-    };
-    draw.call(this);
-  }
-
-  initCompressorVisualization() {
-    const canvas = document.getElementById("comp-viz");
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-
-    const ML = 36, MR = 8, MT = 8, MB = 22;
-
-    const draw = () => {
-      const W = canvas._cssWidth || canvas.width, H = canvas._cssHeight || canvas.height;
-      const PW = W - ML - MR, PH = H - MT - MB;
-      const c = this.vizState.compressor;
-      const minDb = -60, maxDb = 0;
-
-      const dbToX = (db) => ML + ((db - minDb) / (maxDb - minDb)) * PW;
-      const dbToY = (db) => MT + PH - ((db - minDb) / (maxDb - minDb)) * PH;
-
-      // Background
-      ctx.fillStyle = "#0d0d0d";
-      ctx.fillRect(0, 0, W, H);
-
-      // Grid
-      ctx.lineWidth = 1;
-      [-12, -24, -36, -48].forEach((db) => {
-        const x = dbToX(db), y = dbToY(db);
-        ctx.strokeStyle = "#1e1e1e";
-        // Vertical
-        ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT + PH); ctx.stroke();
-        // Horizontal
-        ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + PW, y); ctx.stroke();
-        // X axis labels
-        ctx.fillStyle = "#444"; ctx.font = "9px monospace"; ctx.textAlign = "center";
-        ctx.fillText(db, x, MT + PH + 14);
-        // Y axis labels
-        ctx.textAlign = "right";
-        ctx.fillText(db, ML - 4, y + 3);
-      });
-      ctx.fillStyle = "#444"; ctx.textAlign = "right";
-      ctx.fillText("0", ML - 4, dbToY(0) + 3);
-      ctx.textAlign = "center";
-      ctx.fillText("0", dbToX(0), MT + PH + 14);
-
-      // 1:1 reference line
-      ctx.strokeStyle = "#2a2a2a";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath();
-      ctx.moveTo(dbToX(minDb), dbToY(minDb));
-      ctx.lineTo(dbToX(maxDb), dbToY(maxDb));
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Threshold vertical marker
-      const tX = dbToX(c.threshold);
-      ctx.strokeStyle = "#c0392b";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath(); ctx.moveTo(tX, MT); ctx.lineTo(tX, MT + PH); ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Compressor transfer curve
-      ctx.strokeStyle = c.enabled ? "#aaff00" : "#3a3a3a";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      for (let i = 0; i <= PW; i++) {
-        const inputDb = minDb + (i / PW) * (maxDb - minDb);
-        const outputDb = this.calculateCompressorOutput(inputDb, c.threshold, c.ratio, c.gain);
-        const x = ML + i;
-        const y = dbToY(Math.max(minDb, Math.min(maxDb, outputDb)));
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-
-      // Current level dot
-      const dotX = dbToX(Math.max(minDb, Math.min(maxDb, c.currentInput)));
-      const dotY = dbToY(Math.max(minDb, Math.min(maxDb, c.currentOutput)));
-      ctx.fillStyle = c.enabled ? "#aaff00" : "#555";
-      ctx.beginPath(); ctx.arc(dotX, dotY, 5, 0, Math.PI * 2); ctx.fill();
-
-      // Axes
-      ctx.strokeStyle = "#333"; ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(ML, MT); ctx.lineTo(ML, MT + PH); ctx.lineTo(ML + PW, MT + PH);
-      ctx.stroke();
-
-      // Axis labels
-      ctx.fillStyle = "#555"; ctx.font = "9px monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("Input (dBFS)", ML + PW / 2, H - 2);
-      ctx.save(); ctx.translate(10, MT + PH / 2); ctx.rotate(-Math.PI / 2);
-      ctx.fillText("Output (dBFS)", 0, 0); ctx.restore();
-
-      // Param readout (top-left)
-      ctx.font = "10px monospace"; ctx.textAlign = "left";
-      ctx.fillStyle = c.enabled ? "#aaff00" : "#555";
-      ctx.fillText(`COMP ${c.enabled ? "ON" : "OFF"}`, ML + 4, MT + 12);
-      ctx.fillStyle = "#666";
-      ctx.fillText(`in  ${c.currentInput.toFixed(1)} dBFS`, ML + 4, MT + 24);
-      ctx.fillText(`out ${c.currentOutput.toFixed(1)} dBFS`, ML + 4, MT + 36);
-
-      // Param readout (top-right)
-      ctx.textAlign = "right";
-      ctx.fillStyle = "#666";
-      ctx.fillText(`thr ${c.threshold.toFixed(1)} dB`, ML + PW - 2, MT + 12);
-      ctx.fillText(`${c.ratio.toFixed(1)}:1`, ML + PW - 2, MT + 24);
-      ctx.fillText(`+${c.gain.toFixed(1)} dB gain`, ML + PW - 2, MT + 36);
-
-      requestAnimationFrame(draw.bind(this));
-    };
-    draw.call(this);
-  }
-
-  initEQVisualization() {
-    const canvas = document.getElementById("eq-viz");
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-
-    const draw = () => {
-      const W = canvas._cssWidth || canvas.width, H = canvas._cssHeight || canvas.height;
-      const ML = 36, MR = 8, MT = 8, MB = 22;
-      const PW = W - ML - MR, PH = H - MT - MB;
-
-      const ae = this.vizState.auralExciter;
-      const bb = this.vizState.bigBottom;
-      const aeEnabled = ae.enabled, bbEnabled = bb.enabled;
-
-      // dB range for spectrum
-      const minDb = -90, maxDb = 0;
-
-      const freqToX = (f) => ML + (Math.log(f / 20) / Math.log(1000)) * PW;
-      const dbToY = (db) => MT + PH - ((db - minDb) / (maxDb - minDb)) * PH;
-
-      ctx.fillStyle = "#0d0d0d";
-      ctx.fillRect(0, 0, W, H);
-
-      // Grid - freq verticals
-      const gridFreqs = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
-      ctx.lineWidth = 1; ctx.strokeStyle = "#1e1e1e";
-      gridFreqs.forEach((f) => {
-        const x = freqToX(f);
-        ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT + PH); ctx.stroke();
-      });
-
-      // Grid - dB horizontals
-      [-18, -36, -54, -72].forEach((db) => {
-        const y = dbToY(db);
-        ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + PW, y); ctx.stroke();
-        ctx.fillStyle = "#444"; ctx.font = "9px monospace"; ctx.textAlign = "right";
-        ctx.fillText(db, ML - 4, y + 3);
-      });
-      ctx.fillStyle = "#444"; ctx.textAlign = "right";
-      ctx.fillText("0", ML - 4, dbToY(0) + 3);
-
-      // Freq axis labels
-      ctx.fillStyle = "#444"; ctx.font = "9px monospace"; ctx.textAlign = "center";
-      [20, 100, 500, "1k", "5k", "20k"].forEach((label, i) => {
-        const f = [20, 100, 500, 1000, 5000, 20000][i];
-        ctx.fillText(label, freqToX(f), MT + PH + 14);
-      });
-
-      // Live spectrum
-      if (this.freqData && this.audioContext) {
-        const binCount = this.freqData.length;
-        const sampleRate = this.audioContext.sampleRate;
-        ctx.beginPath();
-        ctx.strokeStyle = "rgba(41, 182, 246, 0.75)";
-        ctx.lineWidth = 1.5;
-        let started = false;
-        for (let i = 1; i < binCount; i++) {
-          const freq = (i / binCount) * (sampleRate / 2);
-          if (freq < 20 || freq > 20000) continue;
-          const x = freqToX(freq);
-          const y = dbToY(Math.max(minDb, this.freqData[i]));
-          if (!started) { ctx.moveTo(x, y); started = true; }
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-      }
-
-      // Effect curves use a relative boost scale (0–12 dB), anchored at the bottom
-      // of the plot area so they don't overlap with the spectrum.
-      // boostToY: 0 dB boost = bottom of plot, 12 dB boost = top of plot
-      const maxBoost = 12;
-      const boostToY = (boostDb) => MT + PH - (boostDb / maxBoost) * PH;
-
-      // AE effect curve
-      if (aeEnabled) {
-        ctx.beginPath(); ctx.strokeStyle = "#e74c3c"; ctx.lineWidth = 1.5;
-        for (let i = 0; i <= PW; i++) {
-          const freq = 20 * Math.pow(1000, i / PW);
-          const boostDb = (ae.harmonics / 100) *
-            Math.exp(-Math.pow(Math.log2(freq / ae.tune), 2) * 1.5) * maxBoost;
-          const x = ML + i, y = boostToY(boostDb);
-          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-      }
-
-      // BB effect curve
-      if (bbEnabled) {
-        ctx.beginPath(); ctx.strokeStyle = "#aaff00"; ctx.lineWidth = 1.5;
-        for (let i = 0; i <= PW; i++) {
-          const freq = 20 * Math.pow(1000, i / PW);
-          const boostDb = (bb.drive / 100) *
-            Math.exp(-Math.pow(Math.log2(freq / bb.tune), 2) * 2.0) * maxBoost;
-          const x = ML + i, y = boostToY(boostDb);
-          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-      }
-
-      // Axes border
-      ctx.strokeStyle = "#333"; ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(ML, MT); ctx.lineTo(ML, MT + PH); ctx.lineTo(ML + PW, MT + PH);
-      ctx.stroke();
-
-      // Legend (top-right)
-      ctx.font = "10px monospace"; ctx.textAlign = "right";
-      let legendY = MT + 12;
-      if (this.freqData && this.audioContext) {
-        ctx.fillStyle = "rgba(41,182,246,0.9)";
-        ctx.fillText("spectrum", ML + PW - 2, legendY); legendY += 13;
-      }
-      if (aeEnabled) {
-        ctx.fillStyle = "#e74c3c";
-        ctx.fillText(`AE ${ae.harmonics.toFixed(0)}% @${ae.tune}Hz`, ML + PW - 2, legendY); legendY += 13;
-      }
-      if (bbEnabled) {
-        ctx.fillStyle = "#aaff00";
-        ctx.fillText(`BB ${bb.drive.toFixed(0)}% @${bb.tune}Hz`, ML + PW - 2, legendY);
-      }
-      if (!aeEnabled && !bbEnabled && !(this.freqData && this.audioContext)) {
-        ctx.fillStyle = "#333"; ctx.textAlign = "center";
-        ctx.fillText("Start mic or enable AE/BB", ML + PW / 2, MT + PH / 2);
-      }
-
-      // Animation frame
-      requestAnimationFrame(draw.bind(this));
+    this.ws.onopen = () => {
+      this.connected = true;
+      this.reconnectAttempts = 0;
+      this.hideBanner();
+      this.setStatus("connected", "Connected");
+      this.connectBtn.textContent = "Disconnect";
+      this.setControlsEnabled(true);
+      this.send({ type: "get_state" });
     };
 
-    draw.call(this);
-  }
-
-  initializeAudio() {
-    const startBtn = document.querySelector(".audio-controls .btn:first-of-type");
-    const stopBtn = document.querySelector(".audio-controls .btn:first-of-type + .btn");
-    const vuBar = document.querySelector(".vu-bar");
-    const vuLabel = document.querySelector(".vu-label");
-
-    if (!startBtn || !stopBtn || !vuBar || !vuLabel) return;
-
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-
-    startBtn.addEventListener("click", async () => {
+    this.ws.onmessage = (e) => {
+      let msg;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        this.audioContext = new AudioContext();
-        const source = this.audioContext.createMediaStreamSource(stream);
+        msg = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      this.handle(msg);
+    };
 
-        this.analyser = this.audioContext.createAnalyser();
-        this.analyser.fftSize = 2048;
-        this.analyser.smoothingTimeConstant = 0.8;
-        source.connect(this.analyser);
+    this.ws.onerror = () => this.setStatus("error", "Error");
 
-        // Store for EQ viz
-        this.freqData = new Float32Array(this.analyser.frequencyBinCount);
-        this.timeData = new Float32Array(this.analyser.fftSize);
-        this.audioStream = stream;
+    this.ws.onclose = () => {
+      const wasConnected = this.connected;
+      this.connected = false;
+      this.ws = null;
+      this.connectBtn.textContent = "Connect";
+      this.setControlsEnabled(false);
+      this.setStatus("disconnected", "Disconnected");
+      // Only auto-retry a connection that dropped, never one the user closed.
+      if (wasConnected && this.reconnectAttempts < 5) {
+        this.reconnectAttempts++;
+        setTimeout(() => this.connect(), 1500 * this.reconnectAttempts);
+      }
+    };
+  }
 
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-        console.log("Audio monitoring started (live mic)");
+  disconnect() {
+    this.reconnectAttempts = 99; // suppress the auto-retry
+    if (this.ws) this.ws.close();
+  }
 
-        const updateAudio = () => {
-          if (!this.analyser) return;
+  send(obj) {
+    if (this.ws && this.connected) this.ws.send(JSON.stringify(obj));
+  }
 
-          this.analyser.getFloatTimeDomainData(this.timeData);
-          this.analyser.getFloatFrequencyData(this.freqData);
+  handle(msg) {
+    switch (msg.type) {
+      case "state":
+        if (msg.enabled !== undefined && msg.effect !== undefined) {
+          this.setEnabled(msg.effect, msg.enabled);
+        } else if (msg.value) {
+          this.applyState(msg.value);
+        }
+        break;
 
-          // Calculate RMS level in dB
-          let sum = 0;
-          for (let i = 0; i < this.timeData.length; i++) {
-            sum += this.timeData[i] * this.timeData[i];
-          }
-          const rms = Math.sqrt(sum / this.timeData.length);
-          const db = rms > 0 ? 20 * Math.log10(rms) : -100;
-          const clampedDb = Math.max(-60, Math.min(0, db));
+      case "param_update":
+        this.setValue(msg.effect, msg.param, msg.value, msg.encoding);
+        break;
 
-          // Feed real level into visualizations
-          this.vizState.compressor.currentInput = clampedDb;
-          this.vizState.compressor.currentOutput = this.vizState.compressor.enabled
-            ? this.calculateCompressorOutput(
-                clampedDb,
-                this.vizState.compressor.threshold,
-                this.vizState.compressor.ratio,
-                this.vizState.compressor.gain,
-              )
-            : clampedDb;
-          this.vizState.gate.currentLevel = clampedDb;
-          this.vizState.gate.levelHistory.push(clampedDb);
-          if (this.vizState.gate.levelHistory.length > 400) {
-            this.vizState.gate.levelHistory.shift();
-          }
+      case "preview":
+        this.setEncoding(msg.effect, msg.param, msg.encoding);
+        break;
 
-          // Update VU meter
-          const percentage = ((clampedDb + 60) / 60) * 100;
-          vuBar.style.width = `${percentage}%`;
-          vuLabel.textContent = `${clampedDb.toFixed(1)} dB`;
-          if (clampedDb > -6) {
-            vuBar.style.background = "linear-gradient(90deg, #F44336, #FF9800)";
-          } else if (clampedDb > -18) {
-            vuBar.style.background = "linear-gradient(90deg, #FF9800, #4CAF50)";
-          } else {
-            vuBar.style.background = "linear-gradient(90deg, #2196F3, #4CAF50)";
-          }
+      case "error":
+        this.showBanner(msg.error || "Unknown server error");
+        break;
+    }
+  }
 
-          this.audioFrameId = requestAnimationFrame(updateAudio);
-        };
+  /* ----------------------------------------------------------------- state */
 
-        updateAudio();
+  // The server marshals state keyed by name ("compressor": {"threshold": ...}).
+  // The schema carries the same keys, so the two are matched here without
+  // reimplementing the key derivation.
+  applyState(state) {
+    if (!this.schema) return;
+
+    for (const eff of this.schema.effects) {
+      const effState = state[eff.key];
+      if (!effState) continue;
+
+      if (typeof effState.enabled === "boolean") {
+        this.setEnabled(eff.id, effState.enabled);
+      }
+      for (const p of eff.params) {
+        const v = effState[p.key];
+        if (typeof v === "number") this.setValue(eff.id, p.id, v, null);
+      }
+    }
+
+    if (document.body.hasAttribute("data-advanced")) this.refreshAllEncodings();
+  }
+
+  setValue(effectId, paramId, value, encoding) {
+    const key = `${effectId}:${paramId}`;
+    const rec = this.params.get(key);
+    if (!rec || typeof value !== "number") return;
+
+    this.values.set(key, value);
+    // Do not fight the user's own drag, or overwrite what they are typing.
+    if (document.activeElement !== rec.valueEl) {
+      rec.valueEl.value = formatNumber(rec.p, value);
+    }
+    if (document.activeElement !== rec.slider) {
+      rec.slider.value = toSlider(rec.p, value);
+    }
+    if (encoding) {
+      rec.encoding = encoding;
+    }
+    this.renderDetail(rec);
+    this.draw(effectId);
+  }
+
+  setEncoding(effectId, paramId, encoding) {
+    const rec = this.params.get(`${effectId}:${paramId}`);
+    if (!rec || !encoding) return;
+    rec.encoding = encoding;
+    this.renderDetail(rec);
+  }
+
+  setEnabled(effectId, on) {
+    const rec = this.effects.get(effectId);
+    if (!rec) return;
+    this.enabled.set(effectId, on);
+    rec.enabledInput.checked = on;
+    rec.card.dataset.enabled = String(on);
+    this.draw(effectId);
+  }
+
+  setControlsEnabled(on) {
+    for (const rec of this.params.values()) {
+      rec.slider.disabled = !on;
+      rec.valueEl.disabled = !on;
+    }
+    for (const rec of this.effects.values()) {
+      rec.enabledInput.disabled = !on;
+      rec.reset.disabled = !on;
+    }
+  }
+
+  // Previews are throttled per parameter: a drag fires input events far faster
+  // than there is any point asking the server to re-encode.
+  queuePreview(effectId, paramId, value) {
+    if (!document.body.hasAttribute("data-advanced")) return;
+    const key = `${effectId}:${paramId}`;
+    if (this.previewTimers.has(key)) return;
+
+    this.previewTimers.set(
+      key,
+      setTimeout(() => {
+        this.previewTimers.delete(key);
+        this.send({
+          type: "preview",
+          effect: effectId,
+          param: paramId,
+          value: this.values.get(key),
+        });
+      }, PREVIEW_INTERVAL_MS)
+    );
+  }
+
+  refreshAllEncodings() {
+    for (const [key, value] of this.values) {
+      const [effectId, paramId] = key.split(":").map(Number);
+      this.send({ type: "preview", effect: effectId, param: paramId, value });
+    }
+  }
+
+  /* --------------------------------------------------------- visualisation */
+
+  get(effectId, paramName) {
+    const eff = this.effects.get(effectId);
+    if (!eff) return undefined;
+    const p = eff.schema.params.find((x) => x.name === paramName);
+    if (!p) return undefined;
+    const v = this.values.get(`${effectId}:${p.id}`);
+    return v === undefined ? p.default : v;
+  }
+
+  drawAll() {
+    for (const id of this.effects.keys()) this.draw(id);
+  }
+
+  // prepare sizes a canvas for the display's pixel ratio and hands back a
+  // cleared context, or null when the canvas is not currently laid out — an
+  // advanced-mode graph is display:none in simple mode and has no size to draw
+  // into.
+  prepare(c, effectId) {
+    if (!c || !c.clientWidth) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth;
+    const h = c.clientHeight || 132;
+    if (c.width !== w * dpr || c.height !== h * dpr) {
+      c.width = w * dpr;
+      c.height = h * dpr;
+    }
+    const ctx = c.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.globalAlpha = this.enabled.get(effectId) !== false ? 1 : 0.4;
+    return { ctx, w, h };
+  }
+
+  draw(effectId) {
+    const rec = this.effects.get(effectId);
+    if (!rec) return;
+
+    const main = this.prepare(rec.canvas, effectId);
+    if (!main) return;
+    const { ctx, w, h } = main;
+
+    const pal = vizPalette();
+
+    const auxSpec = AUX_VIZ[rec.schema.name];
+    if (auxSpec) {
+      const a = this.prepare(rec.aux, effectId);
+      if (a) this[auxSpec.draw](a.ctx, a.w, a.h, pal);
+    }
+
+    let caption = "";
+    switch (rec.schema.name) {
+      case "Compressor":
+        caption = this.drawCompressor(ctx, w, h, pal);
+        break;
+      case "Noise Gate":
+        caption = this.drawGate(ctx, w, h, pal);
+        break;
+      case "Aural Exciter":
+        caption = this.drawTilt(ctx, w, h, pal, {
+          corner: this.get(2, "Tune"),
+          amount: this.get(2, "Harmonics"),
+          side: "high",
+          what: "Harmonics are generated above the tune frequency",
+        });
+        break;
+      case "Big Bottom":
+        caption = this.drawTilt(ctx, w, h, pal, {
+          corner: this.get(3, "Tune"),
+          amount: this.get(3, "Drive"),
+          side: "low",
+          what: "Bass is enhanced below the tune frequency",
+        });
+        break;
+    }
+
+    ctx.globalAlpha = 1;
+    if (rec.caption) rec.caption.textContent = caption;
+  }
+
+  // The waveform before and after, with gain reduction on the same time axis
+  // underneath. Threshold and ratio show up as flattened peaks, make-up gain as
+  // the whole clip lifting, attack and release as the shape of the reduction
+  // trace. The static transfer curve that used to be here says the same thing
+  // about threshold and ratio but nothing at all about the rest, so it has
+  // moved to the second canvas, in advanced mode.
+  drawCompressor(ctx, w, h, pal) {
+    const thr = this.get(0, "Threshold") ?? -20;
+    const ratio = this.get(0, "Ratio") ?? 3;
+    const gain = this.get(0, "Gain") ?? 0;
+    const attack = this.get(0, "Attack") ?? 0.7;
+    const release = this.get(0, "Release") ?? 21;
+
+    const A = { x: 26, y: 8, w: w - 34, h: Math.round(h * 0.52) };
+    const cols = Math.max(24, Math.round(A.w));
+    const sim = simulateComp({ thr, ratio, gain, attack, release }, cols, this.liveAudio);
+
+    // Waveform panel. Input first, output over it: where the output is narrower
+    // the compressor took the peak down, where it is wider the make-up gain
+    // pushed it up.
+    const midY = A.y + A.h / 2;
+    const thrHalf = waveHeight(dbToAmp(thr)) * (A.h / 2);
+    line(ctx, A.x, midY, A.x + A.w, midY, pal.grid);
+    line(ctx, A.x, midY - thrHalf, A.x + A.w, midY - thrHalf, pal.warn, [2, 3]);
+    line(ctx, A.x, midY + thrHalf, A.x + A.w, midY + thrHalf, pal.warn, [2, 3]);
+
+    drawWave(ctx, A, sim.inPeak, pal.text, "fill");
+    drawWave(ctx, A, sim.outPeak, pal.accent, "stroke");
+
+    text(ctx, "thr", A.x - 4, midY - thrHalf, pal.warn, "right");
+    legend(ctx, A.x + A.w - 2, A.y + 5, pal);
+
+    // Gain reduction over the same time axis, so a peak in the waveform and the
+    // reduction it caused line up vertically.
+    const B = { x: A.x, y: A.y + A.h + 18, w: A.w, h: h - (A.y + A.h + 18) - 14 };
+    const grMax = Math.max(3, sim.peakGr * 1.3);
+    const by = (db) => B.y + (clamp(db, 0, grMax) / grMax) * B.h;
+
+    line(ctx, B.x, B.y, B.x + B.w, B.y, pal.gridStrong);
+    line(ctx, B.x, B.y + B.h, B.x + B.w, B.y + B.h, pal.grid);
+    plot(ctx, cols, (i) => [B.x + (i / (cols - 1)) * B.w, by(sim.grDb[i])], pal.accent, 1.5, B.y);
+
+    text(ctx, "0", B.x - 4, B.y, pal.dim, "right");
+    text(ctx, `-${grMax.toFixed(0)}`, B.x - 4, B.y + B.h, pal.dim, "right");
+    text(ctx, "gain reduction dB", B.x + 4, B.y - 9, pal.dim, "left");
+    text(ctx, `${sim.spanMs.toFixed(0)} ms`, B.x + B.w, h - 11, pal.dim, "right", "top");
+
+    return (
+      `${sourceLabel(sim)} before (filled) and after (outlined) the compressor, on a ` +
+      `dB height scale. Peaks past the ${thr.toFixed(1)} dB threshold are pulled in at ` +
+      `${ratio.toFixed(1)}:1 — up to ${sim.peakGr.toFixed(1)} dB — over ` +
+      `${attack.toFixed(2)} ms, recovering over ${release.toFixed(0)} ms, then ` +
+      `${gain.toFixed(1)} dB of make-up gain is added.${LIVE_CAVEAT(sim)}`
+    );
+  }
+
+  // The transfer curve, advanced mode only: input level against output level,
+  // which is the clearest statement of what threshold, ratio and make-up gain
+  // do, but which cannot show attack or release at all.
+  drawCompressorCurve(ctx, w, h, pal) {
+    const thr = this.get(0, "Threshold") ?? -20;
+    const ratio = this.get(0, "Ratio") ?? 3;
+    const gain = this.get(0, "Gain") ?? 0;
+
+    const A = { x: 28, y: 10, w: w - 40, h: h - 26 };
+    const lo = -60;
+    const hi = 0;
+    const x = (db) => A.x + ((db - lo) / (hi - lo)) * A.w;
+    const y = (db) => A.y + A.h - ((clamp(db, lo, hi) - lo) / (hi - lo)) * A.h;
+
+    for (const db of [-48, -36, -24, -12]) {
+      line(ctx, x(db), A.y, x(db), A.y + A.h, pal.grid);
+      line(ctx, A.x, y(db), A.x + A.w, y(db), pal.grid);
+      text(ctx, String(db), x(db), A.y + A.h + 6, pal.dim, "center", "top");
+      text(ctx, String(db), A.x - 4, y(db), pal.dim, "right");
+    }
+    line(ctx, A.x, A.y, A.x, A.y + A.h, pal.gridStrong);
+    line(ctx, A.x, A.y + A.h, A.x + A.w, A.y + A.h, pal.gridStrong);
+
+    // Unity: where the curve would sit with the compressor doing nothing.
+    line(ctx, x(lo), y(lo), x(hi), y(hi), pal.dim, [3, 3]);
+
+    const outAt = (inDb) => (inDb <= thr ? inDb : thr + (inDb - thr) / ratio) + gain;
+    plot(
+      ctx,
+      121,
+      (i) => {
+        const inDb = lo + (i / 120) * (hi - lo);
+        return [x(inDb), y(outAt(inDb))];
+      },
+      pal.accent,
+      2
+    );
+
+    line(ctx, x(thr), A.y, x(thr), A.y + A.h, pal.warn, [2, 2]);
+    text(ctx, `thr ${thr.toFixed(1)}`, x(thr) + 4, A.y + 5, pal.warn, "left");
+    text(ctx, "in dB", A.x + A.w, A.y + A.h + 6, pal.dim, "right", "top");
+    // Inside the plot: right-aligned outside it, this ran off the left edge.
+    text(ctx, "out dB", A.x + 5, A.y + 6, pal.dim, "left");
+  }
+
+  // Waveform first: the phrase before and after, so the parts the gate removes
+  // are simply missing from the outlined trace. The level panel underneath puts
+  // the same signal on a dB axis against the opening and closing thresholds,
+  // which is where hysteresis becomes visible.
+  //
+  // Everything is run with the coefficients the device is sent — the one-pole
+  // attack, the hold and release ramps, the hysteresis offset and the range
+  // floor.
+  drawGate(ctx, w, h, pal) {
+    const thr = this.get(1, "Threshold") ?? -42;
+    const attack = this.get(1, "Attack") ?? 0.8;
+    const hold = this.get(1, "Hold") ?? 80;
+    const release = this.get(1, "Release") ?? 210;
+    const range = this.get(1, "Range") ?? -9;
+    const hyst = this.get(1, "Hysteresis") ?? 50;
+
+    const A = { x: 26, y: 8, w: w - 34, h: Math.round(h * 0.46) };
+    const cols = Math.max(24, Math.round(A.w));
+    const sim = simulateGate({ thr, attack, hold, release, range, hyst }, cols, this.liveAudio);
+
+    /* ---- waveform ---- */
+    const midY = A.y + A.h / 2;
+    line(ctx, A.x, midY, A.x + A.w, midY, pal.grid);
+    drawWave(ctx, A, sim.inPeak, pal.text, "fill");
+    drawWave(ctx, A, sim.outPeak, pal.accent, "stroke");
+    legend(ctx, A.x + A.w - 2, A.y + 5, pal);
+
+    /* ---- level against the thresholds ---- */
+    const B = { x: A.x, y: A.y + A.h + 14, w: A.w, h: h - (A.y + A.h + 14) - 14 };
+    const lo = -95;
+    const hi = 0;
+    const x = (i) => B.x + (i / (cols - 1)) * B.w;
+    const y = (db) => B.y + B.h - ((clamp(db, lo, hi) - lo) / (hi - lo)) * B.h;
+
+    for (const db of [-25, -50, -75]) {
+      line(ctx, B.x, y(db), B.x + B.w, y(db), pal.grid);
+      text(ctx, String(db), B.x - 4, y(db), pal.dim, "right");
+    }
+    line(ctx, B.x, B.y, B.x, B.y + B.h, pal.gridStrong);
+    line(ctx, B.x, B.y + B.h, B.x + B.w, B.y + B.h, pal.gridStrong);
+
+    plot(ctx, cols, (i) => [x(i), y(sim.outDb[i])], pal.accent, 1.75, y(lo));
+    plot(ctx, cols, (i) => [x(i), y(sim.inDb[i])], pal.text, 1.25, undefined, [3, 3]);
+
+    line(ctx, B.x, y(sim.openDb), B.x + B.w, y(sim.openDb), pal.warn, [4, 3]);
+    line(ctx, B.x, y(sim.closeDb), B.x + B.w, y(sim.closeDb), pal.warn, [1, 3]);
+    text(ctx, "open", B.x + B.w, y(sim.openDb) - 6, pal.warn, "right");
+    text(ctx, "close", B.x + B.w, y(sim.closeDb) + 6, pal.warn, "right");
+
+    text(ctx, "level dB", B.x + 4, B.y - 6, pal.dim, "left");
+    text(ctx, `${sim.spanMs.toFixed(0)} ms`, B.x + B.w, h - 11, pal.dim, "right", "top");
+
+    const base =
+      `${sourceLabel(sim)} before (filled) and after (outlined) the gate` +
+      (sim.live ? "" : `, over a ${FLOOR_DB} dB noise floor`) +
+      `. It opens at ${sim.openDb.toFixed(1)} dB and stays open down to ` +
+      `${sim.closeDb.toFixed(1)} dB, holds ${hold.toFixed(0)} ms, then closes over ` +
+      `${release.toFixed(0)} ms to ${range.toFixed(1)} dB of attenuation.`;
+
+    if (sim.live) return base + LIVE_CAVEAT(sim);
+
+    return (
+      base +
+      (sim.closeDb > FLOOR_DB
+        ? " The gaps between syllables are what it removes."
+        : ` Both thresholds sit under the ${FLOOR_DB} dB noise floor, so the gate never closes.`)
+    );
+  }
+
+  // Frequency response over the audible band. The corner is exact — it is the
+  // frequency the packet carries — but the device's filter shape is not
+  // recovered, so the skirt is a conventional second-order shelf and the
+  // caption says so rather than implying a measurement.
+  drawTilt(ctx, w, h, pal, o) {
+    if (o.corner === undefined) return "";
+    const amount = o.amount ?? 0;
+    const peak = (amount / 100) * 12; // dB of lift at full drive
+
+    const fLo = 20;
+    const fHi = 20000;
+    const A = { x: 26, y: 8, w: w - 34, h: h - 26 };
+    // 0 dB sits exactly on the bottom rule so the response curve's baseline and
+    // the live spectrum's baseline are the same line. With the axis starting
+    // below zero the two disagreed, and the spectrum appeared to sink under a
+    // curve it shares no scale with.
+    const dbLo = 0;
+    const dbHi = 14;
+    const x = (f) => A.x + (Math.log(f / fLo) / Math.log(fHi / fLo)) * A.w;
+    const y = (db) => A.y + A.h - ((clamp(db, dbLo, dbHi) - dbLo) / (dbHi - dbLo)) * A.h;
+
+    // Decade rules, with the 1-2-5 minor ticks a frequency plot is read against.
+    for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) {
+      const major = f === 100 || f === 1000 || f === 10000;
+      line(ctx, x(f), A.y, x(f), A.y + A.h, major ? pal.gridStrong : pal.grid);
+      if (major) {
+        text(ctx, f >= 1000 ? `${f / 1000}k` : String(f), x(f), A.y + A.h + 6, pal.dim, "center", "top");
+      }
+    }
+    for (const db of [0, 6, 12]) {
+      line(ctx, A.x, y(db), A.x + A.w, y(db), db === 0 ? pal.gridStrong : pal.grid, db === 0 ? null : [2, 3]);
+      text(ctx, db === 0 ? "0" : `+${db}`, A.x - 4, y(db), pal.dim, "right");
+    }
+
+    // Live input spectrum behind the curve, when the level monitor is running.
+    // This is real audio: it shows whether the band being lifted is a band the
+    // voice actually occupies.
+    if (this.spectrum) {
+      const { data, sampleRate, fftSize } = this.spectrum;
+      const binHz = sampleRate / fftSize;
+      ctx.save();
+      ctx.globalAlpha *= 0.28;
+      ctx.beginPath();
+      ctx.moveTo(A.x, A.y + A.h);
+      for (let px = 0; px <= A.w; px++) {
+        const f = fLo * Math.pow(fHi / fLo, px / A.w);
+        const bin = clamp(Math.round(f / binHz), 0, data.length - 1);
+        const t = clamp((data[bin] + 100) / 80, 0, 1); // -100..-20 dBFS
+        ctx.lineTo(A.x + px, A.y + A.h - t * A.h);
+      }
+      ctx.lineTo(A.x + A.w, A.y + A.h);
+      ctx.closePath();
+      ctx.fillStyle = pal.text;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    const N = 220;
+    plot(
+      ctx,
+      N,
+      (i) => {
+        const f = fLo * Math.pow(fHi / fLo, i / (N - 1));
+        return [x(f), y(shelfDb(f, o.corner, peak, o.side))];
+      },
+      pal.accent,
+      2,
+      y(0)
+    );
+
+    line(ctx, x(o.corner), A.y, x(o.corner), A.y + A.h, pal.warn, [2, 2]);
+    const label = `${Math.round(o.corner)} Hz`;
+    text(
+      ctx,
+      label,
+      clamp(x(o.corner) + 4, A.x, A.x + A.w - 34),
+      A.y + 5,
+      pal.warn,
+      "left",
+      "top"
+    );
+    text(ctx, "Hz", A.x + A.w, A.y + A.h + 6, pal.dim, "right", "top");
+
+    return (
+      `${o.what}. Corner ${Math.round(o.corner)} Hz is exact — it is the value in ` +
+      `the packet — and the lift is about ${peak.toFixed(1)} dB at ${amount.toFixed(0)}%. ` +
+      `The roll-off is drawn as a second-order shelf: the device's own filter shape ` +
+      `has not been recovered.` +
+      (this.spectrum ? " Shaded: live input spectrum." : "")
+    );
+  }
+
+  /* ---------------------------------------------------------- level monitor */
+
+  initMonitor() {
+    const btn = document.getElementById("mon-btn");
+    const fill = document.getElementById("meter-fill");
+    const readout = document.getElementById("meter-readout");
+    let stream = null;
+    let audioCtx = null;
+    let raf = null;
+
+    const stop = () => {
+      if (raf) cancelAnimationFrame(raf);
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      if (audioCtx) audioCtx.close();
+      raf = stream = audioCtx = null;
+      fill.style.width = "0%";
+      readout.textContent = "—∞ dB";
+      btn.textContent = "Start monitoring";
+      this.spectrum = null;
+      this.liveAudio = null;
+      this.drawAll();
+    };
+
+    btn.addEventListener("click", async () => {
+      if (stream) {
+        stop();
+        return;
+      }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        });
       } catch (err) {
-        console.error("Microphone access denied:", err);
-        this.showNotification("Microphone access denied", "error");
+        this.showBanner(`Microphone access denied: ${err.message}`);
+        stream = null;
+        return;
       }
+
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      // 4096 gives ~12 Hz bins at 48 kHz, which is enough resolution to say
+      // anything meaningful about where Big Bottom's 60-312 Hz corner sits.
+      analyser.fftSize = 4096;
+      analyser.smoothingTimeConstant = 0.75;
+      src.connect(analyser);
+
+      // A second analyser purely for the waveform window. 32768 samples is the
+      // largest the Web Audio API offers — about 680 ms at 48 kHz, enough for a
+      // phrase and, on typical settings, for the gate's hold and release to
+      // play out. Keeping it separate lets the spectrum stay at a size whose
+      // bin count is worth plotting.
+      const waveAnalyser = audioCtx.createAnalyser();
+      waveAnalyser.fftSize = 32768;
+      src.connect(waveAnalyser);
+
+      const buf = new Float32Array(analyser.fftSize);
+      const spec = new Float32Array(analyser.frequencyBinCount);
+      const wave = new Float32Array(waveAnalyser.fftSize);
+      let lastWave = 0;
+      btn.textContent = "Stop monitoring";
+
+      const tick = () => {
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const rms = Math.sqrt(sum / buf.length);
+        const db = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+        const pct = clamp(((db + 60) / 60) * 100, 0, 100);
+        fill.style.width = `${pct}%`;
+        readout.textContent = db === -Infinity ? "—∞ dB" : `${db.toFixed(1)} dB`;
+
+        analyser.getFloatFrequencyData(spec);
+        this.spectrum = { data: spec, sampleRate: audioCtx.sampleRate, fftSize: analyser.fftSize };
+        this.draw(2);
+        this.draw(3);
+
+        // The level processors cost two full model runs over 32k samples, so
+        // they update at LIVE_REDRAW_MS rather than every frame. Nothing in a
+        // waveform this long is legible faster than that anyway.
+        const now = performance.now();
+        if (now - lastWave >= LIVE_REDRAW_MS) {
+          lastWave = now;
+          waveAnalyser.getFloatTimeDomainData(wave);
+          this.liveAudio = { samples: wave, sampleRate: audioCtx.sampleRate };
+          this.draw(0);
+          this.draw(1);
+        }
+
+        raf = requestAnimationFrame(tick);
+      };
+      tick();
     });
 
-    stopBtn.addEventListener("click", () => {
-      if (this.audioStream) {
-        this.audioStream.getTracks().forEach(t => t.stop());
-        this.audioStream = null;
-      }
-      if (this.audioContext) {
-        this.audioContext.close();
-        this.audioContext = null;
-      }
-      if (this.audioFrameId) {
-        cancelAnimationFrame(this.audioFrameId);
-        this.audioFrameId = null;
-      }
-      this.analyser = null;
-      this.freqData = null;
-      this.timeData = null;
-
-      // Reset to idle levels
-      this.vizState.compressor.currentInput = -60;
-      this.vizState.compressor.currentOutput = -60;
-      this.vizState.gate.currentLevel = -60;
-
-      vuBar.style.width = "0%";
-      vuLabel.textContent = "-∞ dB";
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      console.log("Audio monitoring stopped");
-    });
+    window.addEventListener("beforeunload", stop);
   }
 }
 
-// Initialize controller when DOM is loaded
 document.addEventListener("DOMContentLoaded", () => {
-  console.log("RODE DSP Web GUI initialized");
+  window.app = new App();
 
-  // Create global controller instance
-  window.dspController = new DSPController();
-
-  // Auto-connect if URL has ?auto-connect parameter
-  if (window.location.search.includes("auto-connect")) {
-    setTimeout(() => {
-      window.dspController.connect();
-    }, 1000);
-  }
+  // Surface script failures in the page. Without this a thrown error inside an
+  // async boot step just leaves the interface sitting there looking idle, with
+  // the reason only in the devtools console.
+  const report = (what) => window.app && window.app.showBanner(what);
+  window.addEventListener("error", (e) => report(`Script error: ${e.message}`));
+  window.addEventListener("unhandledrejection", (e) =>
+    report(`Script error: ${(e.reason && e.reason.message) || e.reason}`)
+  );
 });
-
-// Export for module usage
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = DSPController;
-}
