@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -107,17 +108,28 @@ func guiCommand(args []string) error {
 func openURL(url string) {
 	var cmd *exec.Cmd
 
-	// Try to open browser based on OS
-	switch os := os.Getenv("OS"); os {
-	case "Windows_NT":
-		cmd = exec.Command("cmd", "/c", "start", url)
+	// Try to open browser based on OS. runtime.GOOS is the build target, not
+	// the %OS% environment variable, which is unset under most non-cmd shells.
+	switch runtime.GOOS {
+	case "windows":
+		// The empty "" is start's window-title argument; without it start
+		// treats a quoted URL as the title and opens nothing.
+		cmd = exec.Command("cmd", "/c", "start", "", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
 	default:
 		// Try common Linux/Unix commands
-		for _, browserCmd := range []string{"xdg-open", "gnome-open", "kde-open", "gio open"} {
-			if path, err := exec.LookPath(browserCmd); err == nil {
-				cmd = exec.Command(path, url)
-				break
+		for _, browserCmd := range []string{"xdg-open", "gio", "gnome-open", "kde-open"} {
+			path, err := exec.LookPath(browserCmd)
+			if err != nil {
+				continue
 			}
+			if browserCmd == "gio" {
+				cmd = exec.Command(path, "open", url)
+			} else {
+				cmd = exec.Command(path, url)
+			}
+			break
 		}
 	}
 

@@ -11,7 +11,21 @@ RØDE Connect is Windows and macOS only. This works anywhere Go and hidapi do.
 go build
 ```
 
-Linux needs `libudev-dev` (Debian/Ubuntu: `apt install libudev-dev`).
+cgo is required (hidapi is C), so a C toolchain must be present and
+`CGO_ENABLED` must not be 0. That also means no cross-compiling without a
+cross toolchain — build each platform on that platform.
+
+Linux additionally needs `libudev-dev` (Debian/Ubuntu:
+`apt install libudev-dev`), and non-root access to the microphone needs a udev
+rule. Write `/etc/udev/rules.d/70-rode-nt-usb-mini.rules`:
+
+```
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="19f7", ATTRS{idProduct}=="0015", MODE="0660", TAG+="uaccess"
+```
+
+then `sudo udevadm control --reload-rules && sudo udevadm trigger`, and
+replug the microphone. Without it `rode-dsp` fails to open the device unless
+run as root.
 
 ## Use
 
