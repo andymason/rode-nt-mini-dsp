@@ -63,6 +63,8 @@ against the captures so any change is deliberate.
 | `03-luts.md` | lookup tables: provenance and what's wrong with them |
 | `04-open-questions.md` | what is still unresolved |
 | `05-juce.md` | using the JUCE source to read the UI code |
+| `06-static-extraction.md` | what the PE image gave up without Ghidra |
+| `07-workplan.md` | what is left, and the order to do it in |
 
 `tools/frida/` holds instrumentation scripts for the RØDE Connect binary.
 
