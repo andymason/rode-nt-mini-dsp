@@ -146,10 +146,57 @@ func NewServer(port int, dspState *dsp.DSPState, device *hid.Device, debug bool)
 	}
 }
 
+// SyncFromDevice replaces the server's idea of the DSP state with what the
+// microphone actually holds.
+//
+// The config file records what this tool last sent, which stops being true the
+// moment anything else drives the device — RØDE Connect, the rode-dsp CLI, or a
+// replug. Trusting it is what let the browser show an effect as disabled while
+// the device had it enabled, so moving that effect's sliders produced no
+// audible change and the server then wrote its stale view back over the config.
+// The device is the authority. See docs/re/02-protocol.md.
+//
+// A failure here is not fatal: the config stands in, which is no worse than the
+// behaviour this replaces.
+func (s *Server) SyncFromDevice() error {
+	if s.device == nil || !s.device.Connected() {
+		return nil
+	}
+
+	live, err := s.device.ReadState()
+	if err != nil {
+		return err
+	}
+
+	// Copy into the existing DSPState rather than swapping the pointer: the CLI
+	// context shares it and the hub broadcasts from it.
+	for effID, enabled := range live.GetAllEnabled() {
+		s.dspState.SetEnabled(effID, enabled)
+	}
+	for effID, params := range live.GetAllParams() {
+		for paramID, value := range params {
+			if err := s.dspState.SetParam(effID, paramID, value); err != nil {
+				return fmt.Errorf("effect 0x%02x param 0x%02x: %w", effID, paramID, err)
+			}
+		}
+	}
+
+	if err := dsp.SaveConfig("", s.dspState); err != nil {
+		return fmt.Errorf("saving synced state: %w", err)
+	}
+	return nil
+}
+
 // Start begins the HTTP server
 func (s *Server) Start() error {
 	// Start the WebSocket hub
 	go s.hub.Run()
+
+	// Adopt the device's state before serving anything, so the first page load
+	// shows the microphone rather than the last-saved config.
+	if err := s.SyncFromDevice(); err != nil {
+		log.Printf("Could not read state from device, using saved config: %v", err)
+	}
 
 	// Get static file handler
 	staticHandler, err := StaticHandler()
@@ -297,6 +344,12 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 
 	switch msg.Type {
 	case MsgTypeGetState:
+		// The browser sends this on connect and on reconnect, which are exactly
+		// the moments its view may have gone stale — a reconnect in particular
+		// means time passed during which anything could have driven the device.
+		if err := s.SyncFromDevice(); err != nil {
+			log.Printf("Could not read state from device, using saved config: %v", err)
+		}
 		s.sendState(client)
 
 	case MsgTypeSetParam:
