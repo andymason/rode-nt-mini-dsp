@@ -30,13 +30,21 @@ const el = (tag, cls, text) => {
   return n;
 };
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+const svg = (tag, attrs) => {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+};
+
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-// Sliders are integers 0..1000 internally. Linear parameters could use their
-// own units directly, but routing both scales through one normalised position
-// keeps the mapping in a single place and lets log parameters (attack, release,
-// hold, tune) feel right instead of bunching at one end.
-const SLIDER_STEPS = 1000;
+// A control's position is a number 0..1000 along its travel. Linear parameters
+// could use their own units directly, but routing both scales through one
+// normalised position keeps the mapping in a single place and lets log
+// parameters (attack, release, hold, tune) feel right instead of bunching at
+// one end of the dial.
+const POSITION_STEPS = 1000;
 
 // How far the time parameters' controls lean towards logarithmic. 0 is linear,
 // 1 is fully logarithmic, and the value is the exponent of a geometric blend of
@@ -62,22 +70,22 @@ function curveValue(p, t) {
   return p.min + t * (p.max - p.min);
 }
 
-function toSlider(p, value) {
+function toPosition(p, value) {
   const v = clamp(value, p.min, p.max);
   if (p.scale !== "log" || p.min <= 0) {
-    return Math.round(((v - p.min) / (p.max - p.min)) * SLIDER_STEPS);
+    return Math.round(((v - p.min) / (p.max - p.min)) * POSITION_STEPS);
   }
   // The blend has no closed-form inverse. It is monotonic, so bisecting over
-  // slider positions finds the right one in ten iterations.
+  // positions finds the right one in ten iterations.
   let lo = 0;
-  let hi = SLIDER_STEPS;
+  let hi = POSITION_STEPS;
   while (hi - lo > 1) {
     const mid = (lo + hi) >> 1;
-    if (curveValue(p, mid / SLIDER_STEPS) < v) lo = mid;
+    if (curveValue(p, mid / POSITION_STEPS) < v) lo = mid;
     else hi = mid;
   }
-  const dLo = Math.abs(curveValue(p, lo / SLIDER_STEPS) - v);
-  const dHi = Math.abs(curveValue(p, hi / SLIDER_STEPS) - v);
+  const dLo = Math.abs(curveValue(p, lo / POSITION_STEPS) - v);
+  const dHi = Math.abs(curveValue(p, hi / POSITION_STEPS) - v);
   return dLo <= dHi ? lo : hi;
 }
 
@@ -91,8 +99,44 @@ function snap(p, v) {
   return clamp(Number(stepped.toFixed(dp)), p.min, p.max);
 }
 
-function fromSlider(p, pos) {
-  return snap(p, curveValue(p, pos / SLIDER_STEPS));
+// Where a value sits along its control's travel, 0 at the bottom of the range
+// and 1 at the top.
+const toNorm = (p, value) => toPosition(p, value) / POSITION_STEPS;
+
+/* ------------------------------------------------------------------- knobs
+ *
+ * Parameters are dials rather than sliders. This is a rack of processors on a
+ * microphone, and a dial is what the parameter is on the hardware it imitates —
+ * but the reason it is here is space: a dial states its position in a square,
+ * so five of them sit in the width one slider used to need, and a card that ran
+ * to five stacked rows now fits on one.
+ *
+ * The pointer sweeps 270°, the conventional throw, leaving the bottom open for
+ * the value to sit under the number.
+ */
+
+const KNOB_START = 135; // degrees, screen coordinates: 90 points down
+const KNOB_SWEEP = 270;
+const KNOB_RING_R = 42; // in the 100x100 viewBox the dial is drawn in
+const KNOB_CAP_R = 31; // the cap the value sits in, clear of the pointer
+
+// How far a pointer must travel for a knob to cross its whole range. Turning a
+// dial by dragging is a linear gesture whatever the control looks like; 190px
+// is about a comfortable forearm movement, and holding shift stretches it to a
+// quarter of the sensitivity for setting an exact value.
+const KNOB_TRAVEL_PX = 190;
+const KNOB_FINE_PX = 760;
+
+function knobPoint(r, t) {
+  const a = ((KNOB_START + t * KNOB_SWEEP) * Math.PI) / 180;
+  return [50 + r * Math.cos(a), 50 + r * Math.sin(a)];
+}
+
+function knobArc(r, t0, t1) {
+  const [x0, y0] = knobPoint(r, t0);
+  const [x1, y1] = knobPoint(r, t1);
+  const large = (t1 - t0) * KNOB_SWEEP > 180 ? 1 : 0;
+  return `M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`;
 }
 
 // Decimal places follow the registry's resolution, so the readout never claims
@@ -555,7 +599,7 @@ function drawWave(ctx, rect, peak, color, mode) {
 // The level processors carry two stacked panels and need the room; the two
 // frequency graphs are a single plot and do not. Anything absent here uses the
 // height in the stylesheet.
-const VIZ_HEIGHT = { Compressor: 182, "Noise Gate": 182 };
+const VIZ_HEIGHT = { Compressor: 168, "Noise Gate": 168 };
 
 // Second graphs, shown only in advanced mode.
 // A second graph under the main one, for the effects whose parameters the
@@ -938,11 +982,16 @@ class App {
         figure.append(aux);
       }
 
-      const caption = el("figcaption", "viz-caption");
+      // The caption explains what is plotted and, on the frequency graphs, which
+      // part of the shape is measured and which is drawn by convention. That is
+      // a protocol claim, so it belongs with the rest of them behind Advanced.
+      const caption = el("figcaption", "viz-caption adv-only");
       figure.append(caption);
       body.append(figure);
 
-      for (const p of eff.params) body.append(this.renderParam(eff, p));
+      const params = el("div", "params");
+      for (const p of eff.params) params.append(this.renderParam(eff, p));
+      body.append(params);
 
       card.append(body);
       host.append(card);
@@ -957,14 +1006,29 @@ class App {
   renderParam(eff, p) {
     const key = `${eff.id}:${p.id}`;
     const wrap = el("div", "param");
+    wrap.append(el("span", "param-name", p.name));
 
-    const head = el("div", "param-head");
-    head.append(el("span", "param-name", p.name));
+    // --- the dial
+    const knob = el("div", "knob");
+    knob.tabIndex = 0;
+    knob.setAttribute("role", "slider");
+    knob.setAttribute("aria-label", `${eff.name} ${p.name}`);
+    knob.setAttribute("aria-valuemin", p.min);
+    knob.setAttribute("aria-valuemax", p.max);
+    knob.setAttribute("aria-disabled", "true");
 
-    // The readout is a field, not a label. However well the slider's curve is
-    // chosen, some values are easier to say than to find, and typing 2.5 is
-    // the direct way to ask for 2.5.
-    const entry = el("span", "param-entry");
+    const dial = svg("svg", { class: "knob-dial", viewBox: "0 0 100 100", "aria-hidden": "true" });
+    const track = svg("path", { class: "knob-track", d: knobArc(KNOB_RING_R, 0, 1) });
+    const arc = svg("path", { class: "knob-arc", d: "" });
+    const cap = svg("circle", { class: "knob-cap", cx: 50, cy: 50, r: KNOB_CAP_R });
+    const pointer = svg("line", { class: "knob-pointer", x1: 50, y1: 50, x2: 50, y2: 50 });
+    dial.append(track, arc, cap, pointer);
+    knob.append(dial);
+
+    // The readout sits in the cap, where the number is on a mixing desk. It is
+    // a field, not a label: however well the dial's curve is chosen, some
+    // values are easier to say than to find, and typing 2.5 asks for 2.5.
+    const entry = el("span", "knob-readout");
     const valueEl = el("input", "param-input");
     valueEl.type = "text";
     valueEl.inputMode = "decimal";
@@ -975,63 +1039,123 @@ class App {
     valueEl.setAttribute("aria-label", `${eff.name} ${p.name} value`);
     entry.append(valueEl);
     const unit = unitLabel(p);
-    // ":1" and "%" are written hard against the number; "dB", "ms" and "Hz"
-    // take a space, as they do everywhere else in the interface.
-    if (unit) {
-      const tight = unit === ":1" || unit === "%";
-      entry.append(el("span", `param-unit${tight ? " param-unit-tight" : ""}`, unit));
-    }
-    head.append(entry);
-    wrap.append(head);
-
-    const slider = el("input");
-    slider.type = "range";
-    slider.min = 0;
-    slider.max = SLIDER_STEPS;
-    slider.step = 1;
-    slider.disabled = true;
-    slider.setAttribute("aria-label", `${eff.name} ${p.name}`);
-    wrap.append(slider);
+    if (unit) entry.append(el("span", "param-unit", unit));
+    knob.append(entry);
+    wrap.append(knob);
 
     const detail = el("div", "detail");
     wrap.append(detail);
 
-    const rec = { eff, p, slider, valueEl, detail, encoding: null };
+    const rec = { eff, p, knob, valueEl, detail, encoding: null, dragging: false };
     this.params.set(key, rec);
 
     const shown = () => this.values.get(key) ?? p.default;
+    const disabled = () => knob.getAttribute("aria-disabled") === "true";
 
-    // Set a value from somewhere other than the slider — typing, or a key —
-    // and write it through to the device.
-    const commit = (raw) => {
-      const v = snap(p, raw);
+    // paint moves the dial to a value without announcing it anywhere.
+    const paint = (v) => {
+      const t = toNorm(p, v);
+      // At the very bottom of the range the arc has no length, and a round cap
+      // would draw it as a dot sitting outside the track.
+      arc.setAttribute("d", t > 0.004 ? knobArc(KNOB_RING_R, 0, t) : "");
+      // The pointer rides the clear ring between the cap and the track, so it
+      // never crosses the number the cap is there to hold.
+      const [x1, y1] = knobPoint(KNOB_CAP_R + 1, t);
+      const [x2, y2] = knobPoint(KNOB_RING_R - 4, t);
+      pointer.setAttribute("x1", x1);
+      pointer.setAttribute("y1", y1);
+      pointer.setAttribute("x2", x2);
+      pointer.setAttribute("y2", y2);
+      knob.setAttribute("aria-valuenow", v);
+      knob.setAttribute("aria-valuetext", `${formatNumber(p, v)}${unit ? " " + unit : ""}`);
+      if (document.activeElement !== valueEl) valueEl.value = formatNumber(p, v);
+    };
+    rec.paint = paint;
+
+    // hold updates everything on this side — the dial, the readout, the
+    // graphs, the advanced encoding — without writing to the device.
+    const hold = (v) => {
       this.values.set(key, v);
-      valueEl.value = formatNumber(p, v);
-      slider.value = toSlider(p, v);
+      paint(v);
       this.draw(eff.id);
       this.queuePreview(eff.id, p.id, v);
+    };
+
+    // commit does that and sends it. Turning the dial holds while it moves and
+    // commits when it is let go, so a gesture across the range is one write
+    // rather than several hundred.
+    const commit = (raw) => {
+      const v = snap(p, raw);
+      hold(v);
       this.send({ type: "set_param", effect: eff.id, param: p.id, value: v });
     };
 
-    // Dragging updates the readout and asks the server what the value would
-    // encode to, but does not write to the device. The commit happens on
-    // change, which is when the device and the config file are touched.
-    slider.addEventListener("input", () => {
-      const v = fromSlider(p, Number(slider.value));
-      this.values.set(key, v);
-      valueEl.value = formatNumber(p, v);
-      this.draw(eff.id);
-      this.queuePreview(eff.id, p.id, v);
+    /* --- turning it
+     *
+     * Dragging, not tracking the angle of the pointer. Absolute angle means a
+     * touch that lands anywhere but the current position jumps the value there
+     * — under a fingertip that covers the whole dial, the wrong value every
+     * time. A drag has no such moment: the knob starts from where it is and
+     * follows the finger. Vertical and horizontal both count, so the gesture
+     * works whichever way the hand happens to move.
+     */
+    let drag = null;
+
+    knob.addEventListener("pointerdown", (e) => {
+      if (disabled() || e.target === valueEl) return;
+      e.preventDefault();
+      // Capture keeps the gesture alive when the finger or cursor wanders off
+      // the dial, which on a control this small it will. Losing the capture is
+      // not a reason to refuse the turn.
+      try {
+        knob.setPointerCapture(e.pointerId);
+      } catch {}
+      drag = { x: e.clientX, y: e.clientY, t: toNorm(p, shown()) };
+      rec.dragging = true;
+      knob.classList.add("knob-turning");
     });
 
-    slider.addEventListener("change", () => {
-      const v = fromSlider(p, Number(slider.value));
-      this.send({ type: "set_param", effect: eff.id, param: p.id, value: v });
+    knob.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      // Accumulated rather than measured from the start of the gesture, so
+      // reaching for shift part-way through changes the sensitivity from that
+      // point on instead of teleporting the value.
+      const span = e.shiftKey ? KNOB_FINE_PX : KNOB_TRAVEL_PX;
+      drag.t = clamp(drag.t + ((e.clientX - drag.x) - (e.clientY - drag.y)) / span, 0, 1);
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+      hold(snap(p, curveValue(p, drag.t)));
     });
 
-    // Arrow keys step by the parameter's own resolution. The native behaviour
-    // steps by one slider position, which near the bottom of a curved range is
-    // far less than one resolution step and so does nothing at all.
+    const endDrag = () => {
+      if (!drag) return;
+      drag = null;
+      rec.dragging = false;
+      knob.classList.remove("knob-turning");
+      this.send({ type: "set_param", effect: eff.id, param: p.id, value: shown() });
+    };
+
+    knob.addEventListener("pointerup", endDrag);
+    knob.addEventListener("pointercancel", endDrag);
+
+    knob.addEventListener(
+      "wheel",
+      (e) => {
+        if (disabled()) return;
+        e.preventDefault();
+        commit(shown() + (e.deltaY < 0 ? 1 : -1) * (p.step || 1));
+      },
+      { passive: false }
+    );
+
+    // Back to the default, the way a plugin's knob does it.
+    knob.addEventListener("dblclick", () => {
+      if (!disabled()) commit(p.default);
+    });
+
+    // Arrow keys step by the parameter's own resolution rather than by some
+    // fraction of the dial's travel, which near the bottom of a curved range
+    // would be far less than one step and so do nothing at all.
     const KEY_STEPS = {
       ArrowUp: 1,
       ArrowRight: 1,
@@ -1044,11 +1168,20 @@ class App {
       const n = KEY_STEPS[e.key];
       if (n === undefined) return false;
       e.preventDefault();
-      commit(shown() + n * (p.step || 1));
+      if (!disabled()) commit(shown() + n * (p.step || 1));
       return true;
     };
 
-    slider.addEventListener("keydown", stepKey);
+    knob.addEventListener("keydown", (e) => {
+      if (stepKey(e)) return;
+      if (e.key === "Home") {
+        e.preventDefault();
+        commit(p.min);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        commit(p.max);
+      }
+    });
 
     valueEl.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
@@ -1223,14 +1356,12 @@ class App {
     const rec = this.params.get(key);
     if (!rec || typeof value !== "number") return;
 
+    // Do not fight the hand on the dial: a broadcast that arrives mid-gesture
+    // is this client's own earlier value coming back.
+    if (rec.dragging) return;
+
     this.values.set(key, value);
-    // Do not fight the user's own drag, or overwrite what they are typing.
-    if (document.activeElement !== rec.valueEl) {
-      rec.valueEl.value = formatNumber(rec.p, value);
-    }
-    if (document.activeElement !== rec.slider) {
-      rec.slider.value = toSlider(rec.p, value);
-    }
+    rec.paint(value);
     if (encoding) {
       rec.encoding = encoding;
     }
@@ -1256,7 +1387,8 @@ class App {
 
   setControlsEnabled(on) {
     for (const rec of this.params.values()) {
-      rec.slider.disabled = !on;
+      rec.knob.setAttribute("aria-disabled", String(!on));
+      rec.knob.tabIndex = on ? 0 : -1;
       rec.valueEl.disabled = !on;
     }
     for (const rec of this.effects.values()) {
