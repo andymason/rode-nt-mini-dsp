@@ -60,8 +60,9 @@
             <div class="monitor-head">
                 <h2>Input level</h2>
                 <p class="monitor-note">
-                    Measured in the browser with the Web Audio API. Nothing is sent to the server,
-                    and it does not read the microphone's DSP — the device has no read-back path.
+                    Measured in the browser with the Web Audio API. Nothing is sent to the server.
+                    This is the signal arriving from the microphone, so the device's own DSP is
+                    already in it — the values above are read back from the device separately.
                 </p>
             </div>
             <div class="monitor-body">

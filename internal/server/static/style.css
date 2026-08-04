@@ -379,11 +379,12 @@ main {
     background: var(--bg-sunken);
 }
 
-/* A second graph under the main one, advanced mode only. It is display:none
-   until then, which is why app.js redraws on the advanced toggle: a hidden
-   canvas has no layout and so nothing to draw into. */
+/* A second graph under the main one: the level-domain view, where threshold,
+   ratio, make-up gain, range and hysteresis are legible as geometry. Taller
+   than it was when it lived behind the advanced toggle, because it now carries
+   measured spans and their labels rather than a bare curve. */
 .viz-aux {
-    height: 116px;
+    height: 140px;
     margin-top: 8px;
 }
 

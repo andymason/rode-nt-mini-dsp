@@ -1,29 +1,29 @@
 {
   "aural_exciter": {
     "enabled": false,
-    "harmonics": 98,
-    "tune": 798
+    "harmonics": 47.5,
+    "tune": 600
   },
   "big_bottom": {
-    "drive": 26,
-    "enabled": true,
-    "tune": 312
+    "drive": 33.5,
+    "enabled": false,
+    "tune": 87
   },
   "compressor": {
     "attack": 0.3,
     "enabled": true,
     "gain": 0,
-    "ratio": 3,
-    "release": 34,
-    "threshold": -36
+    "ratio": 1.6,
+    "release": 31.5,
+    "threshold": -26.5
   },
   "noise_gate": {
-    "attack": 9.7,
+    "attack": 0.8,
     "enabled": true,
-    "hold": 265,
-    "hysteresis": 87,
-    "range": -69,
-    "release": 216,
-    "threshold": -52.5
+    "hold": 328,
+    "hysteresis": 67,
+    "range": -31.5,
+    "release": 407,
+    "threshold": -19
   }
 }

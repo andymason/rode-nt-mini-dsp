@@ -444,6 +444,61 @@ function plot(ctx, n, at, color, width, fillTo, dash) {
   ctx.restore();
 }
 
+// arrowHead draws a solid triangle at (x, y) pointing along the unit vector
+// (dx, dy). Used on its own to show direction of travel, and in pairs by span().
+function arrowHead(ctx, x, y, dx, dy, color, size) {
+  const s = size || 4;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - dx * s - dy * s * 0.55, y - dy * s + dx * s * 0.55);
+  ctx.lineTo(x - dx * s + dy * s * 0.55, y - dy * s - dx * s * 0.55);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// span draws a double-headed measuring arrow with a label beside it.
+//
+// Range and hysteresis are both *distances* — how far the floor sits below
+// unity, and how much quieter the signal must get before the gate lets go. Two
+// threshold lines imply the second and a flattened trace implies the first, but
+// neither states the quantity. Drawing them as measured distances does, and it
+// is why these two parameters were previously hard to see the effect of.
+function span(ctx, x1, y1, x2, y2, label, color, labelSide) {
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.restore();
+
+  // Below ~11px the two heads meet and the line reads as a blob; the label
+  // still carries the number, so the heads are simply dropped.
+  if (len >= 11) {
+    const dx = (x2 - x1) / len;
+    const dy = (y2 - y1) / len;
+    arrowHead(ctx, x2, y2, dx, dy, color, 4);
+    arrowHead(ctx, x1, y1, -dx, -dy, color, 4);
+  }
+
+  const mx = (x1 + x2) / 2;
+  const my = (y1 + y2) / 2;
+  const vertical = Math.abs(y2 - y1) > Math.abs(x2 - x1);
+  if (labelSide === "top" || !vertical) {
+    // Above the span rather than beside it. A short vertical span in a crowded
+    // corner has no horizontal room for a label, but the lane above it is free.
+    text(ctx, label, mx, Math.min(y1, y2) - 6, color, "center", "bottom");
+  } else {
+    text(ctx, label, mx + (labelSide === "left" ? -6 : 6), my, color,
+      labelSide === "left" ? "right" : "left");
+  }
+}
+
 const sourceLabel = (sim) =>
   sim.live ? "Your microphone, live," : "A test phrase";
 
@@ -503,7 +558,14 @@ function drawWave(ctx, rect, peak, color, mode) {
 const VIZ_HEIGHT = { Compressor: 182, "Noise Gate": 182 };
 
 // Second graphs, shown only in advanced mode.
-const AUX_VIZ = { Compressor: { label: "transfer curve", draw: "drawCompressorCurve" } };
+// A second graph under the main one, for the effects whose parameters the
+// time-domain picture cannot show. The waveform answers "what does this do to
+// my voice"; these answer "what do these numbers mean", which is the question
+// threshold, ratio, gain, range and hysteresis actually pose.
+const AUX_VIZ = {
+  Compressor: { label: "transfer curve", draw: "drawCompressorCurve" },
+  "Noise Gate": { label: "gate transfer and hysteresis loop", draw: "drawGateTransfer" },
+};
 
 /* -------------------------------------------------------------- application */
 
@@ -675,11 +737,13 @@ class App {
       if (VIZ_HEIGHT[eff.name]) canvas.style.height = `${VIZ_HEIGHT[eff.name]}px`;
       figure.append(canvas);
 
-      // A second graph, advanced mode only, where one effect has a view worth
-      // showing that does not belong in the main picture.
+      // A second graph, where an effect has a view worth showing that does not
+      // belong in the main picture. It used to be advanced-only; it carries the
+      // only depiction of range, hysteresis, ratio and make-up gain, so hiding
+      // it left those parameters with no visualisation at all.
       let aux = null;
       if (AUX_VIZ[eff.name]) {
-        aux = el("canvas", "viz viz-aux adv-only");
+        aux = el("canvas", "viz viz-aux");
         aux.setAttribute("role", "img");
         aux.setAttribute("aria-label", `${eff.name} ${AUX_VIZ[eff.name].label}`);
         figure.append(aux);
@@ -1211,7 +1275,44 @@ class App {
     );
 
     line(ctx, x(thr), A.y, x(thr), A.y + A.h, pal.warn, [2, 2]);
-    text(ctx, `thr ${thr.toFixed(1)}`, x(thr) + 4, A.y + 5, pal.warn, "left");
+    // A threshold near 0 dB puts its line against the right edge, where a
+    // left-aligned label runs off the canvas.
+    const thrRight = x(thr) > A.x + A.w - 62;
+    text(ctx, `thr ${thr.toFixed(1)}`, x(thr) + (thrRight ? -4 : 4), A.y + 5, pal.warn,
+      thrRight ? "right" : "left");
+
+    // The knee: where the curve leaves unity, which is the one point on the
+    // plot that threshold alone decides.
+    ctx.save();
+    ctx.fillStyle = pal.warn;
+    ctx.beginPath();
+    ctx.arc(x(thr), y(outAt(thr)), 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Make-up gain as the distance between the curve and where it would sit
+    // without it — the parameter's actual contribution, rather than the total
+    // offset from unity, which also contains the compression.
+    // Measured on the left of the plot rather than the right: a high threshold
+    // pushes both its own label and the curve into the top-right corner, and
+    // the two collided there. Below the threshold the curve is simply
+    // in + gain, so the span reads the same wherever it is taken.
+    const gx = lo + (hi - lo) * 0.16;
+    if (Math.abs(gain) > 0.05) {
+      span(ctx, x(gx), y(outAt(gx) - gain), x(gx), y(outAt(gx)),
+        `gain ${gain > 0 ? "+" : ""}${gain.toFixed(1)}`, pal.accent, "right");
+    }
+
+    // Ratio, labelled on the segment whose slope it is. Above the curve, which
+    // is empty; below it the fill and the unity line are already competing.
+    // Skipped when the compressed segment is too short to label honestly.
+    if (hi - thr > 8) {
+      const midIn = thr + (hi - thr) * 0.45;
+      if (x(midIn) > x(thr) + 12 && x(midIn) < A.x + A.w - 26) {
+        text(ctx, `${ratio.toFixed(1)}:1`, x(midIn), y(outAt(midIn)) - 9, pal.accent, "center");
+      }
+    }
+
     text(ctx, "in dB", A.x + A.w, A.y + A.h + 6, pal.dim, "right", "top");
     // Inside the plot: right-aligned outside it, this ran off the left edge.
     text(ctx, "out dB", A.x + 5, A.y + 6, pal.dim, "left");
@@ -1284,6 +1385,111 @@ class App {
         ? " The gaps between syllables are what it removes."
         : ` Both thresholds sit under the ${FLOOR_DB} dB noise floor, so the gate never closes.`)
     );
+  }
+
+  // Input level against output level: the gate's transfer, drawn as the
+  // hysteresis loop it actually is.
+  //
+  // This exists because range and hysteresis were the two parameters whose
+  // effect the waveform could not show. Range only appears in the waveform if
+  // the gate happens to close during the phrase, and even then as a subtle
+  // change in floor height; hysteresis appears only if the level happens to
+  // settle between the two thresholds, which for most settings it never does.
+  // Here both are structural and always visible: hysteresis is the horizontal
+  // gap between the branches, range is the vertical drop of the closed one.
+  //
+  // The loop is the point. A rising signal follows the lower branch until it
+  // reaches the opening threshold; a falling signal stays on the upper branch
+  // until the lower closing threshold. Two paths between the same two levels is
+  // what hysteresis means, and no single-valued curve can express it.
+  drawGateTransfer(ctx, w, h, pal) {
+    const thr = this.get(1, "Threshold") ?? -42;
+    const range = this.get(1, "Range") ?? -9;
+    const hyst = this.get(1, "Hysteresis") ?? 50;
+
+    const openDb = thr;
+    const closeDb = thr + gateHysteresisDb(hyst);
+    const hystDb = openDb - closeDb;
+
+    const A = { x: 32, y: 14, w: w - 46, h: h - 32 };
+
+    // Independent x and y scales rather than a square plot: the canvas is wide
+    // and short, so equal dB-per-pixel would squash the range drop to a few
+    // pixels. Unity is therefore not at 45 degrees, and is drawn explicitly.
+    const xlo = clamp(Math.min(closeDb - 8, closeDb + range - 4), -110, -26);
+    const ylo = xlo + Math.min(range, 0) - 3;
+    const x = (db) => A.x + ((clamp(db, xlo, 0) - xlo) / (0 - xlo)) * A.w;
+    const y = (db) => A.y + A.h - ((clamp(db, ylo, 0) - ylo) / (0 - ylo)) * A.h;
+
+    // Tick step follows the window: a tight threshold-and-range combination can
+    // leave a span of 30 dB, where 20 dB steps give a single labelled tick.
+    const xSpan = 0 - xlo;
+    const xStep = xSpan > 80 ? 20 : xSpan > 45 ? 10 : 5;
+    for (let db = -xStep; db > xlo + 3; db -= xStep) {
+      line(ctx, x(db), A.y, x(db), A.y + A.h, pal.grid);
+      text(ctx, String(db), x(db), A.y + A.h + 6, pal.dim, "center", "top");
+    }
+    // The y axis spans further than the x axis by the depth of the range, so it
+    // gets its own ticks rather than sharing the x ones.
+    const yStep = ylo < -160 ? 60 : ylo < -90 ? 40 : 20;
+    for (let db = -yStep; db > ylo + 6; db -= yStep) {
+      line(ctx, A.x, y(db), A.x + A.w, y(db), pal.grid);
+      text(ctx, String(db), A.x - 4, y(db), pal.dim, "right");
+    }
+    line(ctx, A.x, A.y, A.x, A.y + A.h, pal.gridStrong);
+    line(ctx, A.x, A.y + A.h, A.x + A.w, A.y + A.h, pal.gridStrong);
+
+    // The band the gate can be in either state in.
+    ctx.save();
+    ctx.fillStyle = pal.warn;
+    ctx.globalAlpha *= 0.13;
+    ctx.fillRect(x(closeDb), A.y, Math.max(1, x(openDb) - x(closeDb)), A.h);
+    ctx.restore();
+
+    // Unity is out = in. With independent x and y scales that is not the box
+    // diagonal, so it is plotted from the axis values rather than the corners.
+    line(ctx, x(xlo), y(xlo), x(0), y(0), pal.dim, [3, 3]);
+    text(ctx, "unity", A.x + A.w - 2, y(-2) + 7, pal.dim, "right", "top");
+
+    // Closed branch: everything is pulled down by the range. Dashed, because it
+    // is the state the signal is being held in rather than passed through.
+    plot(ctx, 2, (i) => {
+      const d = i ? openDb : xlo;
+      return [x(d), y(d + range)];
+    }, pal.accent, 2, undefined, [5, 3]);
+
+    // Open branch: unity, from the closing threshold upwards.
+    plot(ctx, 2, (i) => {
+      const d = i ? 0 : closeDb;
+      return [x(d), y(d)];
+    }, pal.accent, 2);
+
+    // The two transitions, arrowed in the direction the gate travels.
+    line(ctx, x(openDb), y(openDb + range), x(openDb), y(openDb), pal.accent, [2, 2]);
+    arrowHead(ctx, x(openDb), y(openDb), 0, -1, pal.accent, 5);
+    line(ctx, x(closeDb), y(closeDb), x(closeDb), y(closeDb + range), pal.accent, [2, 2]);
+    arrowHead(ctx, x(closeDb), y(closeDb + range), 0, 1, pal.accent, 5);
+
+    // Hysteresis: the horizontal gap, measured.
+    const bandY = A.y + 9;
+    span(ctx, x(closeDb), bandY, x(openDb), bandY, `hyst ${hystDb.toFixed(1)} dB`, pal.warn);
+
+    // Range: the vertical drop, measured well left of the loop so the arrow
+    // does not sit on top of the transitions.
+    const rx = x(xlo) + Math.max(26, (x(closeDb) - x(xlo)) * 0.45);
+    const rdb = xlo + (0 - xlo) * ((rx - A.x) / A.w);
+    if (range < -0.05) {
+      // A shallow range keeps the loop close to the left edge, leaving no room
+      // for the label beside the arrow — and the space to its right belongs to
+      // the "close" marker. It goes above the arrow instead.
+      const side = rx - A.x > 78 ? "left" : "top";
+      span(ctx, rx, y(rdb), rx, y(rdb + range), `range ${range.toFixed(1)} dB`, pal.accent, side);
+    }
+
+    text(ctx, "open", x(openDb) + 5, y(openDb) - 8, pal.warn, "left");
+    text(ctx, "close", x(closeDb) - 5, y(closeDb + range) + 8, pal.warn, "right");
+    text(ctx, "in dB", A.x + A.w, A.y + A.h + 6, pal.dim, "right", "top");
+    text(ctx, "out dB", A.x + 4, A.y + 6, pal.dim, "left");
   }
 
   // Frequency response over the audible band. The corner is exact — it is the
