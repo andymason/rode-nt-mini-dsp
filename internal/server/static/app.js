@@ -593,8 +593,14 @@ class App {
     this.connectBtn = document.getElementById("connect-btn");
     this.bannerEl = document.getElementById("banner");
 
+    this.presets = [];
+    // Set while a Delete click is waiting for its confirming second click.
+    this.deleteArmed = null;
+
     this.initTheme();
     this.initAdvanced();
+    this.initPresets();
+    this.initTransfer();
     this.initMonitor();
 
     this.connectBtn.addEventListener("click", () => {
@@ -658,6 +664,189 @@ class App {
     // Advanced-only graphs have no layout while hidden, so they can only be
     // drawn once the attribute is set.
     this.drawAll();
+  }
+
+  /* ------------------------------------------------------------------ presets
+   *
+   * A preset is a whole DSP state — every parameter of every effect, and which
+   * effects are on. The server owns them; this side only names one and shows
+   * what came back.
+   */
+
+  initPresets() {
+    this.presetSelect = document.getElementById("preset-select");
+    this.presetNote = document.getElementById("preset-note");
+    this.presetNameInput = document.getElementById("preset-name");
+    this.presetLoadBtn = document.getElementById("preset-load");
+    this.presetSaveBtn = document.getElementById("preset-save");
+    this.presetDeleteBtn = document.getElementById("preset-delete");
+
+    this.presetSelect.addEventListener("change", () => {
+      this.disarmDelete();
+      this.updatePresetControls();
+    });
+
+    this.presetLoadBtn.addEventListener("click", () => {
+      const name = this.presetSelect.value;
+      if (name) this.send({ type: "load_preset", name });
+    });
+
+    const save = () => {
+      const name = this.presetNameInput.value.trim();
+      if (!name) {
+        this.presetNameInput.focus();
+        return;
+      }
+      this.pendingPreset = name; // select it once the new list arrives
+      this.send({ type: "save_preset", name });
+      this.presetNameInput.value = "";
+    };
+
+    this.presetSaveBtn.addEventListener("click", save);
+    this.presetNameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") save();
+    });
+    this.presetNameInput.addEventListener("input", () => this.updatePresetControls());
+
+    // Delete confirms in place rather than through confirm(): a modal dialog
+    // blocks the page, and the second click says the same thing.
+    this.presetDeleteBtn.addEventListener("click", () => {
+      const name = this.presetSelect.value;
+      if (!name) return;
+      if (this.deleteArmed !== name) {
+        this.deleteArmed = name;
+        this.presetDeleteBtn.textContent = "Delete?";
+        this.presetDeleteBtn.classList.add("btn-danger");
+        setTimeout(() => this.disarmDelete(), 4000);
+        return;
+      }
+      this.disarmDelete();
+      this.send({ type: "delete_preset", name });
+    });
+  }
+
+  disarmDelete() {
+    this.deleteArmed = null;
+    this.presetDeleteBtn.textContent = "Delete";
+    this.presetDeleteBtn.classList.remove("btn-danger");
+  }
+
+  setPresets(list) {
+    this.presets = Array.isArray(list) ? list : [];
+
+    // Keep the selection across a refresh: the list is rebuilt on every save
+    // and delete, and losing the highlighted row each time is disorienting.
+    const want = this.pendingPreset || this.presetSelect.value;
+    this.pendingPreset = null;
+
+    this.presetSelect.textContent = "";
+    if (!this.presets.length) {
+      const opt = el("option", null, "No presets");
+      opt.value = "";
+      this.presetSelect.append(opt);
+    }
+    for (const p of this.presets) {
+      const opt = el("option", null, p.builtin ? `${p.name} (built-in)` : p.name);
+      opt.value = p.name;
+      this.presetSelect.append(opt);
+    }
+    if (want && this.presets.some((p) => p.name === want)) this.presetSelect.value = want;
+
+    this.disarmDelete();
+    this.updatePresetControls();
+  }
+
+  currentPreset() {
+    return this.presets.find((p) => p.name === this.presetSelect.value) || null;
+  }
+
+  updatePresetControls() {
+    const sel = this.currentPreset();
+    const live = this.connected;
+
+    this.presetSelect.disabled = !live || !this.presets.length;
+    this.presetLoadBtn.disabled = !live || !sel;
+    // Built-ins live in the binary, so the server would refuse both of these.
+    this.presetDeleteBtn.disabled = !live || !sel || sel.builtin;
+    this.presetNameInput.disabled = !live;
+    this.presetSaveBtn.disabled = !live || !this.presetNameInput.value.trim();
+    // Export only reads; import writes to the device, so it needs the link.
+    this.importBtn.disabled = !live;
+
+    this.presetNote.textContent = sel
+      ? sel.description || (sel.builtin ? "Built-in preset." : "Saved on this machine.")
+      : "Dial the effects in, then save the whole state under a name.";
+  }
+
+  /* -------------------------------------------------- import and export
+   *
+   * The file is the server's own state document — byte for byte what the tool
+   * writes to rode_dsp_config.json — so an export can be dropped in beside the
+   * binary and picked up by the CLI, and a config file can be imported here.
+   */
+
+  initTransfer() {
+    this.exportBtn = document.getElementById("export-btn");
+    this.importBtn = document.getElementById("import-btn");
+    const file = document.getElementById("import-file");
+
+    this.exportBtn.addEventListener("click", () => this.exportSettings());
+    this.importBtn.addEventListener("click", () => file.click());
+
+    file.addEventListener("change", async () => {
+      const f = file.files && file.files[0];
+      // Clearing the input matters: picking the same file twice in a row
+      // otherwise fires no second change event.
+      file.value = "";
+      if (f) await this.importSettings(f);
+    });
+  }
+
+  async exportSettings() {
+    let text;
+    try {
+      // Straight from the server rather than rebuilt from the sliders, so the
+      // file is the state the device was actually given.
+      const res = await fetch("/api/state");
+      if (!res.ok) throw new Error(`state request failed: ${res.status}`);
+      text = JSON.stringify(await res.json(), null, 2);
+    } catch (err) {
+      this.showBanner(`Could not export settings: ${err.message}`);
+      return;
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    const a = el("a");
+    a.href = url;
+    a.download = `rode-dsp-settings-${stamp}.json`;
+    a.click();
+    // Not revoked immediately: the click only starts the download, and pulling
+    // the URL out from under it in the same tick is a race. A second is far
+    // longer than the browser needs to take a copy of a few hundred bytes.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async importSettings(file) {
+    let doc;
+    try {
+      doc = JSON.parse(await file.text());
+    } catch (err) {
+      this.showBanner(`${file.name} is not valid JSON: ${err.message}`);
+      return;
+    }
+
+    // Check the shape here as well as on the server. The server rejects a
+    // document with no recognised effects too, but saying so before anything
+    // is sent keeps a mis-picked file from looking like a device error.
+    const known = this.schema && this.schema.effects.some((e) => doc && doc[e.key]);
+    if (!known) {
+      this.showBanner(`${file.name} does not contain any RØDE DSP settings.`);
+      return;
+    }
+
+    this.hideBanner();
+    this.send({ type: "import_state", value: doc });
   }
 
   setStatus(state, text) {
@@ -938,6 +1127,7 @@ class App {
       this.connectBtn.textContent = "Disconnect";
       this.setControlsEnabled(true);
       this.send({ type: "get_state" });
+      this.send({ type: "list_presets" });
     };
 
     this.ws.onmessage = (e) => {
@@ -992,6 +1182,10 @@ class App {
 
       case "preview":
         this.setEncoding(msg.effect, msg.param, msg.encoding);
+        break;
+
+      case "presets":
+        this.setPresets(msg.presets || []);
         break;
 
       case "error":
@@ -1069,6 +1263,7 @@ class App {
       rec.enabledInput.disabled = !on;
       rec.reset.disabled = !on;
     }
+    this.updatePresetControls();
   }
 
   // Previews are throttled per parameter: a drag fires input events far faster
@@ -1601,7 +1796,8 @@ class App {
       raf = stream = audioCtx = null;
       fill.style.width = "0%";
       readout.textContent = "—∞ dB";
-      btn.textContent = "Start monitoring";
+      btn.textContent = "Monitor";
+      btn.classList.remove("btn-on");
       this.spectrum = null;
       this.liveAudio = null;
       this.drawAll();
@@ -1644,7 +1840,8 @@ class App {
       const spec = new Float32Array(analyser.frequencyBinCount);
       const wave = new Float32Array(waveAnalyser.fftSize);
       let lastWave = 0;
-      btn.textContent = "Stop monitoring";
+      btn.textContent = "Stop";
+      btn.classList.add("btn-on");
 
       const tick = () => {
         analyser.getFloatTimeDomainData(buf);

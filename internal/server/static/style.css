@@ -314,6 +314,96 @@ main {
     font-size: 13px;
 }
 
+/* ---------- presets ---------- */
+
+/* Same panel treatment as the level monitor: a whole-device control, not one
+   effect's, so it reads as a peer of that rather than of the cards. */
+.presets {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 15px 18px;
+}
+
+.presets-head h2 {
+    font-size: 13px;
+    color: var(--text-dim);
+}
+
+.presets-note {
+    margin: 4px 0 13px;
+    font-size: 12px;
+    color: var(--text-faint);
+    max-width: 68ch;
+}
+
+.presets-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* Divides "pick and apply one" from "make a new one" without a caption. */
+.presets-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: 0 6px;
+    background: var(--border);
+}
+
+.select,
+.text-input {
+    font: inherit;
+    font-size: 13px;
+    padding: 6px 9px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-sunken);
+    color: var(--text);
+}
+
+.select {
+    min-width: 15ch;
+}
+
+.text-input {
+    min-width: 22ch;
+}
+
+.text-input::placeholder {
+    color: var(--text-faint);
+}
+
+.select:focus,
+.text-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.select:disabled,
+.text-input:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* A toggle button that is currently on — the level monitor while it runs. */
+.btn-on {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+/* The armed state of Delete, between the first click and the confirming one. */
+.btn-danger {
+    color: var(--err);
+    border-color: var(--err);
+}
+
+.btn-danger:hover:not(:disabled) {
+    border-color: var(--err);
+}
+
 /* Column flow rather than grid: the four cards have quite different heights
    (the gate has six parameters, Big Bottom two), and a grid leaves a large
    hole under the short ones. Columns pack them tightly. */
@@ -646,32 +736,18 @@ input[type="range"]:hover:not(:disabled)::-moz-range-thumb {
     color: var(--text-faint);
 }
 
-/* ---------- monitor ---------- */
+/* ---------- monitor ----------
+   It lives in the top bar: it is a glance at the input, not a section of the
+   page, and it belongs next to the connection state rather than below the
+   effects it helps to dial in. */
 
-.monitor {
-    background: var(--bg-raised);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 15px 18px;
-}
-
-.monitor-head h2 {
-    font-size: 13px;
-    color: var(--text-dim);
-}
-
-.monitor-note {
-    margin: 4px 0 13px;
-    font-size: 12px;
-    color: var(--text-faint);
-    max-width: 68ch;
-}
-
-.monitor-body {
+.monitor-inline {
     display: flex;
     align-items: center;
-    gap: 14px;
-    flex-wrap: wrap;
+    gap: 8px;
+    padding-right: 10px;
+    margin-right: 2px;
+    border-right: 1px solid var(--border);
 }
 
 .meter {
@@ -702,6 +778,14 @@ input[type="range"]:hover:not(:disabled)::-moz-range-thumb {
     opacity: 0;
 }
 
+/* The top bar's version: short enough to sit beside everything else there. */
+.meter-sm {
+    flex: none;
+    width: 96px;
+    min-width: 0;
+    height: 6px;
+}
+
 .meter-readout {
     font-family: var(--mono);
     font-size: 12px;
@@ -709,6 +793,20 @@ input[type="range"]:hover:not(:disabled)::-moz-range-thumb {
     color: var(--text-dim);
     min-width: 8ch;
     text-align: right;
+}
+
+/* On a narrow window the top bar is already wrapping; the meter is the one
+   thing there that can be dropped without losing a control. */
+@media (max-width: 560px) {
+    .monitor-inline .meter-sm,
+    .monitor-inline .meter-readout {
+        display: none;
+    }
+
+    .monitor-inline {
+        border-right: none;
+        padding-right: 0;
+    }
 }
 
 /* ---------- misc ---------- */

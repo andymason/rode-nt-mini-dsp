@@ -25,6 +25,21 @@
         </div>
 
         <div class="topbar-actions">
+            <!--
+              Input level. Measured in the browser with the Web Audio API and
+              never sent anywhere; it is the microphone's output, so the
+              device's own DSP is already in it.
+            -->
+            <div class="monitor-inline">
+                <button id="mon-btn" class="btn btn-ghost"
+                    title="Meter the microphone in the browser. Nothing is sent to the server.">Monitor</button>
+                <div class="meter meter-sm" role="img" aria-label="Input level meter">
+                    <div class="meter-fill" id="meter-fill"></div>
+                    <div class="meter-peak" id="meter-peak"></div>
+                </div>
+                <span class="meter-readout" id="meter-readout">—∞ dB</span>
+            </div>
+
             <div class="status" id="status" data-state="disconnected">
                 <span class="status-dot" aria-hidden="true"></span>
                 <span class="status-text">Disconnected</span>
@@ -54,26 +69,41 @@
             <p class="device-note" id="device-note"></p>
         </section>
 
-        <section id="effects" class="effects" aria-live="polite"></section>
-
-        <section class="monitor">
-            <div class="monitor-head">
-                <h2>Input level</h2>
-                <p class="monitor-note">
-                    Measured in the browser with the Web Audio API. Nothing is sent to the server.
-                    This is the signal arriving from the microphone, so the device's own DSP is
-                    already in it — the values above are read back from the device separately.
-                </p>
+        <!--
+          Presets: a whole DSP state under a name. The list comes from the
+          server, which serves the built-ins plus whatever is in the preset
+          file, so nothing about them is written down here either.
+        -->
+        <section class="presets" id="presets">
+            <div class="presets-head">
+                <h2>Presets</h2>
+                <p class="presets-note" id="preset-note"></p>
             </div>
-            <div class="monitor-body">
-                <button id="mon-btn" class="btn">Start monitoring</button>
-                <div class="meter" role="img" aria-label="Input level meter">
-                    <div class="meter-fill" id="meter-fill"></div>
-                    <div class="meter-peak" id="meter-peak"></div>
-                </div>
-                <span class="meter-readout" id="meter-readout">—∞ dB</span>
+
+            <div class="presets-row">
+                <select id="preset-select" class="select" aria-label="Preset"></select>
+                <button id="preset-load" class="btn btn-primary">Load</button>
+                <button id="preset-delete" class="btn btn-ghost">Delete</button>
+
+                <span class="presets-sep" aria-hidden="true"></span>
+
+                <input id="preset-name" class="text-input" type="text" maxlength="64" autocomplete="off"
+                    spellcheck="false" placeholder="Save current settings as…" aria-label="New preset name" />
+                <button id="preset-save" class="btn">Save</button>
+
+                <span class="presets-sep" aria-hidden="true"></span>
+
+                <!-- The same JSON the tool keeps in rode_dsp_config.json, so an
+                     exported file can be dropped in beside the binary and the
+                     CLI will load it. -->
+                <button id="export-btn" class="btn">Export JSON</button>
+                <button id="import-btn" class="btn">Import JSON</button>
+                <input id="import-file" type="file" accept="application/json,.json" hidden />
             </div>
         </section>
+
+        <section id="effects" class="effects" aria-live="polite"></section>
+
     </main>
 
     <script src="app.js"></script>
