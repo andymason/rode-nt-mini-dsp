@@ -230,6 +230,60 @@ func (d *Device) sendPacketSync(packet [protocol.PacketSize]byte) bool {
 	}
 }
 
+// DefaultAckTimeout is the ACK wait used by SendAndAwaitAck. RØDE Connect
+// allows 500ms; 250ms is comfortably above observed device latency while
+// keeping a 16-ID probe sweep responsive.
+const DefaultAckTimeout = 250 * time.Millisecond
+
+// SendAndAwaitAck writes one packet and reports whether the device acknowledged
+// it, distinguishing an ACK from silence.
+//
+// This exists because sendPacketSync cannot: on timeout it returns true
+// ("assuming success"), which is fine for fire-and-forget parameter updates but
+// useless for probing, where the absence of an ACK is the signal. It bypasses
+// sendQueue/workerLoop so nothing else can interleave, and drains the
+// capacity-1 ackChan first — a late ACK from a previous packet would otherwise
+// be misattributed to this one.
+//
+// A false return means the write succeeded but no ACK arrived within timeout.
+// An error means the write itself failed.
+func (d *Device) SendAndAwaitAck(packet [protocol.PacketSize]byte, timeout time.Duration) (bool, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	if !d.connected || d.device == nil {
+		return false, errors.New("device not connected")
+	}
+	if timeout <= 0 {
+		timeout = DefaultAckTimeout
+	}
+
+	// Discard any ACK left over from an earlier packet.
+	select {
+	case <-d.ackChan:
+	default:
+	}
+
+	if d.debug {
+		fmt.Printf("PROBE SEND: % 02x\n", packet[:8])
+	}
+
+	n, err := d.device.Write(packet[:])
+	if err != nil {
+		return false, fmt.Errorf("write failed: %w", err)
+	}
+	if n != len(packet) {
+		return false, fmt.Errorf("short write: %d of %d bytes", n, len(packet))
+	}
+
+	select {
+	case <-d.ackChan:
+		return true, nil
+	case <-time.After(timeout):
+		return false, nil
+	}
+}
+
 // workerLoop processes packets from the send queue
 func (d *Device) workerLoop() {
 	defer close(d.workerDone)
