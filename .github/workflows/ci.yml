@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      # sstallion/go-hid binds hidapi, which needs libudev on Linux.
+      # internal/protocol and internal/dsp build without it, but the cli,
+      # server and hid packages do not.
+      - name: Install libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test -race ./...
+
+  # The encoder and registry tests are the correctness-critical ones and have no
+  # cgo dependency. Running them without libudev keeps that true, so the tables
+  # can be verified on any machine.
+  test-no-cgo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Test protocol and dsp packages
+        run: go test ./internal/protocol/... ./internal/dsp/...

@@ -264,7 +264,10 @@ func (s *DSPState) UnmarshalJSON(data []byte) error {
 			if valJSON, ok := effData[paramKey]; ok {
 				var value float64
 				if err := json.Unmarshal(valJSON, &value); err == nil {
-					s.params[effID][param.ParamID] = value
+					// Config files are hand-editable and this path bypasses
+					// SetParam's validation, so clamp here. Without it an
+					// out-of-range value reaches the encoders directly.
+					s.params[effID][param.ParamID] = clampToRange(value, param)
 				}
 			}
 		}
@@ -317,4 +320,20 @@ func (s *DSPState) String() string {
 	}
 
 	return sb.String()
+}
+
+// clampToRange constrains a value to a parameter's declared UI range, mapping
+// NaN to the default. Used on the config-load path, which does not go through
+// SetParam and so has no other validation.
+func clampToRange(value float64, param ParamDef) float64 {
+	if math.IsNaN(value) {
+		return param.Default
+	}
+	if value < param.UIMin {
+		return param.UIMin
+	}
+	if value > param.UIMax {
+		return param.UIMax
+	}
+	return value
 }

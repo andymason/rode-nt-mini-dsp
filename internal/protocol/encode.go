@@ -5,6 +5,41 @@ import (
 	"math"
 )
 
+// clamp01 constrains a fraction to [0, 1]. NaN maps to 0: callers derive
+// fractions from logarithms, and a non-positive input would otherwise carry NaN
+// through the LUT interpolation and emit a garbage coefficient.
+func clamp01(v float64) float64 {
+	if math.IsNaN(v) || v < 0.0 {
+		return 0.0
+	}
+	if v > 1.0 {
+		return 1.0
+	}
+	return v
+}
+
+// clamp constrains v to [lo, hi], mapping NaN to lo.
+func clamp(v, lo, hi float64) float64 {
+	if math.IsNaN(v) || v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// clampIndex constrains a LUT index to [0, 255], mapping NaN to 0.
+func clampIndex(v float64) int {
+	if math.IsNaN(v) || v < 0.0 {
+		return 0
+	}
+	if v > 255.0 {
+		return 255
+	}
+	return int(math.Round(v))
+}
+
 // DBToQ16Raw converts dB to Q16 format (reference=32768.0)
 func DBToQ16Raw(db, reference float64) uint32 {
 	if db >= 0.0 {
@@ -98,7 +133,9 @@ func NGRangeToUSB(db float64) uint32 {
 func NGHysteresisToUSB(pct float64) uint32 {
 	maxQ16 := 28970.10
 	minQ16 := 13045.18
-	q16 := maxQ16 - (pct/100.0)*(maxQ16-minQ16)
+	// Percentage is a hard 0-100 range; extrapolating past it would emit
+	// coefficients outside the span observed on the device.
+	q16 := maxQ16 - (clamp(pct, 0.0, 100.0)/100.0)*(maxQ16-minQ16)
 	result := q16 * 65536.0
 	if result < 0 {
 		return 0
@@ -111,13 +148,7 @@ func NGHysteresisToUSB(pct float64) uint32 {
 
 // EncodeCompThreshold encodes compressor threshold (-60.0 to 0.0 dB)
 func EncodeCompThreshold(db float64) []byte {
-	frac := (db - (-60.0)) / 60.0
-	if frac < 0.0 {
-		frac = 0.0
-	}
-	if frac > 1.0 {
-		frac = 1.0
-	}
+	frac := clamp01((db - (-60.0)) / 60.0)
 	val := InterpolateSequentialLUT(CompThresholdLUT, frac)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, val)
@@ -126,26 +157,14 @@ func EncodeCompThreshold(db float64) []byte {
 
 // EncodeCompRatio encodes compressor ratio (1.5 to 4.5:1)
 func EncodeCompRatio(ratio float64) []byte {
-	idx := int(math.Round((ratio - 1.5) / 3.0 * 255.0))
-	if idx < 0 {
-		idx = 0
-	}
-	if idx > 255 {
-		idx = 255
-	}
-	return []byte{byte(idx)}
+	return []byte{byte(clampIndex((ratio - 1.5) / 3.0 * 255.0))}
 }
 
 // EncodeCompAttack encodes compressor attack time (0.1 to 10.0 ms)
 func EncodeCompAttack(ms float64) []byte {
 	// Log scaling: ms = 0.1 * 100^t (Ghidra: min=0.1, log_base=100.0)
-	frac := math.Log(ms/0.1) / math.Log(100.0)
-	if frac < 0.0 {
-		frac = 0.0
-	}
-	if frac > 1.0 {
-		frac = 1.0
-	}
+	// Clamp before the log: ms <= 0 is outside its domain.
+	frac := clamp01(math.Log(clamp(ms, 0.1, 10.0)/0.1) / math.Log(100.0))
 	val := InterpolateSequentialLUT(CompAttackLUT, frac)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, val)
@@ -155,13 +174,8 @@ func EncodeCompAttack(ms float64) []byte {
 // EncodeCompRelease encodes compressor release time (5.0 to 200.0 ms)
 func EncodeCompRelease(ms float64) []byte {
 	// Log scaling: ms = 5.0 * 40^t (Ghidra: min=5.0, log_base=40.0)
-	frac := math.Log(ms/5.0) / math.Log(40.0)
-	if frac < 0.0 {
-		frac = 0.0
-	}
-	if frac > 1.0 {
-		frac = 1.0
-	}
+	// Clamp before the log: ms <= 0 is outside its domain.
+	frac := clamp01(math.Log(clamp(ms, 5.0, 200.0)/5.0) / math.Log(40.0))
 	val := InterpolateSequentialLUT(CompReleaseLUT, frac)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, val)
@@ -170,13 +184,9 @@ func EncodeCompRelease(ms float64) []byte {
 
 // EncodeCompGain encodes compressor gain (0.0 to 9.0 dB)
 func EncodeCompGain(db float64) []byte {
-	frac := db / 9.0
-	if frac < 0.0 {
-		frac = 0.0
-	}
-	if frac > 1.0 {
-		frac = 1.0
-	}
+	// TODO(docs/re/04-open-questions.md): the 9.0 divisor is not among the float
+	// constants recovered from the binary. Confirm the real gain range.
+	frac := clamp01(db / 9.0)
 	val := InterpolateSequentialLUT(CompGainLUT, frac)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, val)
@@ -185,13 +195,7 @@ func EncodeCompGain(db float64) []byte {
 
 // EncodeAEHarmonics encodes Aural Exciter harmonics (0.0 to 100.0%)
 func EncodeAEHarmonics(pct float64) []byte {
-	idx := int(math.Round(pct / 100.0 * 255.0))
-	if idx < 0 {
-		idx = 0
-	}
-	if idx > 255 {
-		idx = 255
-	}
+	idx := clampIndex(pct / 100.0 * 255.0)
 	lutVal := InterpolateIndexedLUT(HarmonicsDriveLUT, idx)
 	buf := make([]byte, 5)
 	binary.LittleEndian.PutUint32(buf[:4], lutVal)
@@ -201,13 +205,7 @@ func EncodeAEHarmonics(pct float64) []byte {
 
 // EncodeAETune encodes Aural Exciter tune (600.0 to 5000.0 Hz)
 func EncodeAETune(hz float64) []byte {
-	idx := int(math.Round((hz - 600.0) / 4400.0 * 255.0))
-	if idx < 0 {
-		idx = 0
-	}
-	if idx > 255 {
-		idx = 255
-	}
+	idx := clampIndex((hz - 600.0) / 4400.0 * 255.0)
 	lut1, lut2 := InterpolateAETune(idx)
 	buf := make([]byte, 9)
 	binary.LittleEndian.PutUint32(buf[:4], lut1)
@@ -218,13 +216,7 @@ func EncodeAETune(hz float64) []byte {
 
 // EncodeBBDrive encodes Big Bottom drive (0.0 to 100.0%)
 func EncodeBBDrive(pct float64) []byte {
-	idx := int(math.Round(pct / 100.0 * 255.0))
-	if idx < 0 {
-		idx = 0
-	}
-	if idx > 255 {
-		idx = 255
-	}
+	idx := clampIndex(pct / 100.0 * 255.0)
 	lutVal := InterpolateIndexedLUT(HarmonicsDriveLUT, idx)
 	buf := make([]byte, 5)
 	binary.LittleEndian.PutUint32(buf[:4], lutVal)
@@ -234,14 +226,7 @@ func EncodeBBDrive(pct float64) []byte {
 
 // EncodeBBTune encodes Big Bottom tune (60.0 to 312.0 Hz)
 func EncodeBBTune(hz float64) []byte {
-	idx := int(math.Round((hz - 60.0) / 252.0 * 255.0))
-	if idx < 0 {
-		idx = 0
-	}
-	if idx > 255 {
-		idx = 255
-	}
-	return []byte{byte(idx)}
+	return []byte{byte(clampIndex((hz - 60.0) / 252.0 * 255.0))}
 }
 
 // EncodeNGThreshold encodes noise gate threshold
