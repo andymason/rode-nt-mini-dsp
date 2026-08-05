@@ -42,6 +42,9 @@ func probeEffectsCommand(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := noExtraArgs(fs); err != nil {
+		return err
+	}
 	if *maxID > 0xFF {
 		return fmt.Errorf("max-id must be <= 0xff")
 	}

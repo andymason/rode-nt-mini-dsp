@@ -53,6 +53,21 @@ func Dispatch(args []string) error {
 	return cmd.Run(args[1:])
 }
 
+// noExtraArgs rejects leftover positional arguments. Go's flag package stops
+// parsing at the first non-flag word and stashes the rest in fs.Args(), so
+// "rode-dsp status gui" would otherwise run status and silently drop "gui".
+func noExtraArgs(fs *flag.FlagSet) error {
+	if fs.NArg() == 0 {
+		return nil
+	}
+	extra := fs.Args()
+	if _, isCommand := commands[extra[0]]; isCommand {
+		return fmt.Errorf("unexpected argument %q: run one command at a time, e.g. %q",
+			extra[0], os.Args[0]+" "+extra[0])
+	}
+	return fmt.Errorf("unexpected argument(s): %v", extra)
+}
+
 // BriefStatus prints a short connection status without config details
 func BriefStatus() {
 	fmt.Fprintf(os.Stderr, "RODE NT-USB Mini DSP Controller\n\n")

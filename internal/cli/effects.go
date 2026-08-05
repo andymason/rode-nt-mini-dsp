@@ -42,6 +42,9 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
+		if err := noExtraArgs(fs); err != nil {
+			return err
+		}
 
 		// Collect the flags that were explicitly provided by the user.
 		set := make(map[string]bool)

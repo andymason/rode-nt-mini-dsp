@@ -18,6 +18,9 @@ func defaultsCommand(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := noExtraArgs(fs); err != nil {
+		return err
+	}
 
 	// Create context
 	ctx := NewContext()

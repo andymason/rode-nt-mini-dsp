@@ -20,6 +20,9 @@ func connectCommand(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := noExtraArgs(fs); err != nil {
+		return err
+	}
 
 	// Create context
 	ctx := NewContext()
@@ -88,6 +91,9 @@ func disconnectCommand(args []string) error {
 	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
 
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := noExtraArgs(fs); err != nil {
 		return err
 	}
 
