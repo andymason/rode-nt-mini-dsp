@@ -44,7 +44,7 @@ func defaultsCommand(args []string) error {
 	ctx.Println("OK")
 
 	// Save config
-	ctx.Printf("Saving configuration to %s... ", ctx.ConfigPath)
+	ctx.Printf("Saving configuration to %s... ", ctx.DisplayConfigPath())
 	if err := ctx.SaveConfig(); err != nil {
 		ctx.Println("FAILED")
 		return fmt.Errorf("failed to save config: %w", err)

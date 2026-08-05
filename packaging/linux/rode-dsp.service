@@ -1,0 +1,36 @@
+[Unit]
+Description=Apply RODE NT-USB Mini DSP settings
+Documentation=https://github.com/andymason/rode-dsp
+
+# @CONFIG@ is replaced by install.sh with the installing user's config file,
+# normally ~/.config/rode-dsp/config.json. Replace it by hand if you are placing
+# this file yourself. It cannot be written as %h: in a system unit that expands
+# to /root, not to the user's home.
+#
+# No config means nothing to restore -- the microphone powers up with its own
+# defaults, which is the right answer. systemd logs this as a skipped unit
+# rather than a failure, and picks the file up as soon as it exists.
+ConditionPathExists=@CONFIG@
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rode-dsp load --quiet --wait 5 --config @CONFIG@
+
+# The microphone keeps no DSP state across power loss, so "not connected" is a
+# normal outcome, not a failure.
+SuccessExitStatus=2
+
+# Runs as root: root always has access to the hidraw node, so the service does
+# not depend on the uaccess rule or on anyone being logged in.
+# PrivateDevices= must stay off -- it would hide /dev/hidraw*.
+# ProtectHome= is read-only rather than yes, so the config above stays readable.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+
+# No [Install] section: 71-rode-dsp-service.rules starts this unit via udev,
+# which already covers boot, hotplug and resume.

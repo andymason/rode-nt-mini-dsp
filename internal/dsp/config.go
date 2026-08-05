@@ -8,17 +8,17 @@ import (
 	"sync"
 )
 
-// DefaultConfigFile is the default configuration filename
-const DefaultConfigFile = "rode_dsp_config.json"
-
 // fileMu serializes config file writes to prevent corruption from rapid/concurrent saves
 var fileMu sync.Mutex
 
 // ConfigPath returns the absolute path to the configuration file.
-// If an empty string is provided, returns the default config file path.
+// An empty path means the platform default; see paths.go.
 func ConfigPath(path string) (string, error) {
 	if path == "" {
-		return filepath.Abs(DefaultConfigFile)
+		var err error
+		if path, err = DefaultConfigPath(); err != nil {
+			return "", err
+		}
 	}
 	return filepath.Abs(path)
 }

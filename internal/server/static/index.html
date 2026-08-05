@@ -93,9 +93,9 @@
 
                 <span class="presets-sep" aria-hidden="true"></span>
 
-                <!-- The same JSON the tool keeps in rode_dsp_config.json, so an
-                     exported file can be dropped in beside the binary and the
-                     CLI will load it. -->
+                <!-- The same JSON the tool keeps in its config file, so an
+                     exported file can be handed straight back to the CLI with
+                     'rode-dsp load --config <file>'. -->
                 <button id="export-btn" class="btn">Export JSON</button>
                 <button id="import-btn" class="btn">Import JSON</button>
                 <input id="import-file" type="file" accept="application/json,.json" hidden />

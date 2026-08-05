@@ -39,11 +39,11 @@ func loadCommand(args []string) error {
 		return fmt.Errorf("failed to check config: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("config file not found: %s\n  Run a command like 'comp', 'gate', etc. to create one first", ctx.ConfigPath)
+		return fmt.Errorf("config file not found: %s\n  Run a command like 'comp', 'gate', etc. to create one first", ctx.DisplayConfigPath())
 	}
 
 	// Load configuration
-	ctx.Printf("Loading config from %s...\n", ctx.ConfigPath)
+	ctx.Printf("Loading config from %s...\n", ctx.DisplayConfigPath())
 	if err := ctx.LoadConfig(); err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}

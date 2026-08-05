@@ -68,7 +68,7 @@ func statusCommand(args []string) error {
 			State      *dsp.DSPState `json:"state"`
 		}{
 			Connected:  connected,
-			ConfigFile: ctx.ConfigPath,
+			ConfigFile: ctx.DisplayConfigPath(),
 			Source:     source,
 			State:      state,
 		}
@@ -93,9 +93,9 @@ func statusCommand(args []string) error {
 
 	// Config file info
 	if exists, err := dsp.ConfigExists(ctx.ConfigPath); err == nil && exists {
-		ctx.Printf("Config file: %s (loaded)\n", ctx.ConfigPath)
+		ctx.Printf("Config file: %s (loaded)\n", ctx.DisplayConfigPath())
 	} else {
-		ctx.Printf("Config file: %s (not found, using defaults)\n", ctx.ConfigPath)
+		ctx.Printf("Config file: %s (not found, using defaults)\n", ctx.DisplayConfigPath())
 	}
 
 	ctx.Println()

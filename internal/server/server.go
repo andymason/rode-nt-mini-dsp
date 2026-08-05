@@ -106,11 +106,14 @@ type Hub struct {
 
 // Server manages the HTTP server and WebSocket hub
 type Server struct {
-	port     int
-	hub      *Hub
-	dspState *dsp.DSPState
-	device   *hid.Device
-	debug    bool
+	port int
+	hub  *Hub
+	// configPath is the file the GUI loaded, so edits are written back to the
+	// same place rather than to whatever the default resolves to.
+	configPath string
+	dspState   *dsp.DSPState
+	device     *hid.Device
+	debug      bool
 }
 
 // NewHub creates a new WebSocket hub
@@ -162,15 +165,27 @@ func (h *Hub) Run() {
 }
 
 // NewServer creates a new HTTP server with WebSocket support
-func NewServer(port int, dspState *dsp.DSPState, device *hid.Device, debug bool) *Server {
+func NewServer(port int, configPath string, dspState *dsp.DSPState, device *hid.Device, debug bool) *Server {
 	hub := NewHub()
 	return &Server{
-		port:     port,
-		hub:      hub,
-		dspState: dspState,
-		device:   device,
-		debug:    debug,
+		port:       port,
+		hub:        hub,
+		configPath: configPath,
+		dspState:   dspState,
+		device:     device,
+		debug:      debug,
 	}
+}
+
+// presetPath keeps user presets beside the config file this server is using.
+// An empty result means the location could not be worked out; the dsp package
+// reports that as an error when the file is actually read or written.
+func (s *Server) presetPath() string {
+	path, err := dsp.PresetPathFor(s.configPath)
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 // SyncFromDevice replaces the server's idea of the DSP state with what the
@@ -183,8 +198,8 @@ func NewServer(port int, dspState *dsp.DSPState, device *hid.Device, debug bool)
 // audible change and the server then wrote its stale view back over the config.
 // The device is the authority. See docs/re/02-protocol.md.
 //
-// A failure here is not fatal: the config stands in, which is no worse than the
-// behaviour this replaces.
+// A failure here is not fatal: whatever was loaded stands in — the saved
+// config, or the defaults when no config has been created yet.
 func (s *Server) SyncFromDevice() error {
 	if s.device == nil || !s.device.Connected() {
 		return nil
@@ -208,9 +223,9 @@ func (s *Server) SyncFromDevice() error {
 		}
 	}
 
-	if err := dsp.SaveConfig("", s.dspState); err != nil {
-		return fmt.Errorf("saving synced state: %w", err)
-	}
+	// Deliberately no save: reading the device is not a change the user made,
+	// and opening the GUI should not create a config file. The next actual edit
+	// writes the whole state, synced values included.
 	return nil
 }
 
@@ -419,7 +434,7 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 			s.sendError(client, "Missing name for save_preset")
 			return
 		}
-		if err := dsp.SaveUserPreset("", *msg.Name, "", s.dspState); err != nil {
+		if err := dsp.SaveUserPreset(s.presetPath(), *msg.Name, "", s.dspState); err != nil {
 			s.sendError(client, err.Error())
 			return
 		}
@@ -430,7 +445,7 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 			s.sendError(client, "Missing name for delete_preset")
 			return
 		}
-		if err := dsp.DeleteUserPreset("", *msg.Name); err != nil {
+		if err := dsp.DeleteUserPreset(s.presetPath(), *msg.Name); err != nil {
 			s.sendError(client, err.Error())
 			return
 		}
@@ -470,7 +485,7 @@ func (s *Server) handleSetParam(client *Client, effectID, paramID byte, valueJSO
 	}
 
 	// Save configuration
-	if err := dsp.SaveConfig("", s.dspState); err != nil {
+	if err := dsp.SaveConfig(s.configPath, s.dspState); err != nil {
 		log.Printf("Failed to save config: %v", err)
 	}
 
@@ -557,7 +572,7 @@ func (s *Server) handleSetEnable(client *Client, effectID byte, enabled bool) {
 	s.dspState.SetEnabled(effectID, enabled)
 
 	// Save configuration
-	if err := dsp.SaveConfig("", s.dspState); err != nil {
+	if err := dsp.SaveConfig(s.configPath, s.dspState); err != nil {
 		log.Printf("Failed to save config: %v", err)
 	}
 
@@ -599,7 +614,7 @@ func (s *Server) handleResetDefaults(client *Client, effectID byte) {
 	}
 
 	// Save configuration
-	if err := dsp.SaveConfig("", s.dspState); err != nil {
+	if err := dsp.SaveConfig(s.configPath, s.dspState); err != nil {
 		log.Printf("Failed to save config: %v", err)
 	}
 
@@ -655,7 +670,7 @@ func (s *Server) handleImportState(client *Client, doc json.RawMessage) {
 		return
 	}
 
-	if err := dsp.SaveConfig("", s.dspState); err != nil {
+	if err := dsp.SaveConfig(s.configPath, s.dspState); err != nil {
 		log.Printf("Failed to save config: %v", err)
 	}
 
@@ -670,7 +685,7 @@ func (s *Server) handleImportState(client *Client, doc json.RawMessage) {
 // handleLoadPreset makes a preset the live state: it goes into the shared
 // DSPState, out to the device, into the config file, and back to every browser.
 func (s *Server) handleLoadPreset(client *Client, name string) {
-	preset, err := dsp.FindPreset("", name)
+	preset, err := dsp.FindPreset(s.presetPath(), name)
 	if err != nil {
 		s.sendError(client, err.Error())
 		return
@@ -681,7 +696,7 @@ func (s *Server) handleLoadPreset(client *Client, name string) {
 		return
 	}
 
-	if err := dsp.SaveConfig("", s.dspState); err != nil {
+	if err := dsp.SaveConfig(s.configPath, s.dspState); err != nil {
 		log.Printf("Failed to save config: %v", err)
 	}
 
@@ -737,8 +752,8 @@ func (s *Server) applyStateToDevice() error {
 }
 
 // presetEntries lists what the GUI should offer, built-ins first.
-func presetEntries() []PresetEntry {
-	all, err := dsp.AllPresets("")
+func (s *Server) presetEntries() []PresetEntry {
+	all, err := dsp.AllPresets(s.presetPath())
 	if err != nil {
 		log.Printf("Failed to read presets: %v", err)
 		all = dsp.BuiltinPresets()
@@ -757,7 +772,7 @@ func presetEntries() []PresetEntry {
 
 // sendPresets sends the preset list to one client.
 func (s *Server) sendPresets(client *Client) {
-	msg := WSMessage{Type: MsgTypePresets, Presets: presetEntries()}
+	msg := WSMessage{Type: MsgTypePresets, Presets: s.presetEntries()}
 	if msgJSON, err := json.Marshal(msg); err == nil {
 		client.send <- msgJSON
 	}
@@ -766,7 +781,7 @@ func (s *Server) sendPresets(client *Client) {
 // broadcastPresets tells every client the list changed. Presets live in a file
 // shared by all of them, so a save in one window belongs in the others too.
 func (s *Server) broadcastPresets() {
-	msg := WSMessage{Type: MsgTypePresets, Presets: presetEntries()}
+	msg := WSMessage{Type: MsgTypePresets, Presets: s.presetEntries()}
 	if msgJSON, err := json.Marshal(msg); err == nil {
 		s.hub.broadcast <- msgJSON
 	}

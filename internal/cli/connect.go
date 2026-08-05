@@ -69,10 +69,8 @@ func connectCommand(args []string) error {
 	}
 	ctx.Println("OK")
 
-	// Save configuration (in case defaults were used)
-	if err := ctx.SaveConfig(); err != nil {
-		ctx.Printf("Warning: Failed to save config: %v\n", err)
-	}
+	// Deliberately no save: connecting is not a change, and a config file is
+	// only created once the user actually sets a value.
 
 	ctx.Println("\nDevice connected and configured.")
 	ctx.Println("Current state:")

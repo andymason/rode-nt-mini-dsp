@@ -67,7 +67,7 @@ func guiCommand(args []string) error {
 	}()
 
 	// Create HTTP server
-	srv := server.NewServer(*port, ctx.State, ctx.Device, *debug)
+	srv := server.NewServer(*port, ctx.ConfigPath, ctx.State, ctx.Device, *debug)
 
 	// Channel to signal server shutdown
 	serverErr := make(chan error, 1)

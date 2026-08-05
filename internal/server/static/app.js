@@ -825,8 +825,8 @@ class App {
   /* -------------------------------------------------- import and export
    *
    * The file is the server's own state document — byte for byte what the tool
-   * writes to rode_dsp_config.json — so an export can be dropped in beside the
-   * binary and picked up by the CLI, and a config file can be imported here.
+   * writes to its config file — so an export can be handed back to the CLI with
+   * 'load --config <file>', and a config file can be imported here.
    */
 
   initTransfer() {

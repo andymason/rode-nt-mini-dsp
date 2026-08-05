@@ -15,17 +15,75 @@ cgo is required (hidapi is C), so a C toolchain must be present and
 `CGO_ENABLED` must not be 0. That also means no cross-compiling without a
 cross toolchain — build each platform on that platform.
 
-Linux additionally needs `libudev-dev` (Debian/Ubuntu:
-`apt install libudev-dev`), and non-root access to the microphone needs a udev
-rule. Write `/etc/udev/rules.d/70-rode-nt-usb-mini.rules`:
+Linux additionally needs the libudev development headers:
+
+| Distro | Package |
+|---|---|
+| Debian/Ubuntu | `apt install libudev-dev` |
+| Fedora | `dnf install systemd-devel` |
+| Arch | `pacman -S systemd` (libudev ships with systemd) |
+| openSUSE | `zypper install libudev-devel` |
+
+## Linux setup
+
+### Run it yourself
 
 ```
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="19f7", ATTRS{idProduct}=="0015", MODE="0660", TAG+="uaccess"
+sudo ./packaging/linux/install.sh
 ```
 
-then `sudo udevadm control --reload-rules && sudo udevadm trigger`, and
-replug the microphone. Without it `rode-dsp` fails to open the device unless
-run as root.
+This installs the binary to `/usr/local/bin/rode-dsp` and one udev rule, and
+reloads udev so the rule applies to the microphone already plugged in. Without
+the rule `rode-dsp` can only open the device as root.
+
+The rule matches this one device and uses systemd's `uaccess`, so access
+follows whoever is logged in at the seat: no group to create or join, no
+world-writable device node. Non-systemd distros (Alpine, Void, Gentoo/OpenRC)
+have no `uaccess` — swap the tag for `GROUP="plugdev"` and add yourself to
+that group.
+
+### Apply settings automatically
+
+The microphone has no memory: its DSP settings are gone every time it loses
+power. To restore them without thinking about it:
+
+```
+sudo ./packaging/linux/install.sh --boot
+```
+
+That adds `rode-dsp.service` and a udev rule that starts it. The udev trigger
+is the whole mechanism — it fires on cold boot, on hotplug, and on
+re-enumeration after suspend — so there is no `systemctl enable` step and no
+second boot-time unit.
+
+No config is installed or copied. The unit reads your own
+`~/.config/rode-dsp/config.json`, so changing a setting takes effect at the
+next boot with nothing to re-publish. You can install this before setting
+anything up: until that file exists the unit skips itself
+(`ConditionPathExists=`), which systemd logs as skipped rather than failed,
+and the microphone just uses its own defaults.
+
+The service runs as root, which is what makes it independent of `uaccess`
+(at boot nobody is logged in yet, so `uaccess` grants nothing) and of any
+desktop session. A microphone that is switched off is a clean success rather
+than a failed unit, via `SuccessExitStatus=2`.
+
+```
+systemctl status rode-dsp    # how the last run went
+journalctl -u rode-dsp       # history
+sudo ./packaging/linux/install.sh --uninstall
+```
+
+`packaging/linux/` holds the unit and rules as plain files if you would rather
+place them yourself — replace `@CONFIG@` in the unit with your config path,
+which cannot be written as `%h` because that expands to `/root` in a system
+unit. The installer's locations follow the FHS split between local software
+and packaged software (`/usr/local/bin` for a hand-built binary, `/etc` for
+admin-installed rules and units), and both are overridable:
+
+```
+sudo BIN_DIR=/opt/bin ./packaging/linux/install.sh --boot
+```
 
 ## Use
 
@@ -33,20 +91,47 @@ run as root.
 rode-dsp status                         # connection and current values
 rode-dsp comp --enable --threshold -20
 rode-dsp gate --enable --attack 0.8 --hold 80
-rode-dsp load                           # apply rode_dsp_config.json
+rode-dsp load                           # apply the saved config
 rode-dsp defaults                       # reset everything
 rode-dsp gui                            # web UI on localhost
 ```
 
-Settings live in `rode_dsp_config.json` (or `~/.rode-dsp/config.json`). Exit
-code 2 means the microphone is not connected, so boot scripts can tell that
-apart from a real failure:
+### Where settings live
+
+There is no config file until you change something. A fresh install writes
+nothing, and the microphone runs on its own defaults — `status`, `connect` and
+opening the GUI all leave the disk alone. The first time you set a value, from
+the CLI or the GUI, `config.json` is created in the platform's per-user config
+directory, with `presets.json` beside it:
+
+| | |
+|---|---|
+| Linux/BSD | `$XDG_CONFIG_HOME/rode-dsp/` (default `~/.config/rode-dsp/`) |
+| Windows | `%AppData%\rode-dsp\` |
+| macOS | `~/Library/Application Support/rode-dsp/` |
+
+To use a different file, pass `--config <path>` or set `$RODE_DSP_CONFIG`;
+`--config` wins. `rode-dsp load --config <file>` applies a config someone sent
+you, and the GUI's import does the same in the browser. Presets always sit
+beside whichever config is in use.
+
+Exit codes separate a missing microphone from a real failure, which is what
+lets the service treat a switched-off microphone as success:
+
+| Code | Meaning |
+|---|---|
+| 0 | applied |
+| 1 | failure — bad config, permission denied, protocol error |
+| 2 | microphone not connected |
 
 ```sh
 if rode-dsp load --quiet; then :
 elif [ $? -eq 2 ]; then echo "mic not connected, skipping"
 fi
 ```
+
+`load --wait N` retries for up to N seconds, covering a microphone that
+enumerates a moment late.
 
 ## Accuracy
 

@@ -11,9 +11,6 @@ import (
 	"rode-dsp/internal/protocol"
 )
 
-// DefaultPresetFile is where user presets are stored, beside the config file.
-const DefaultPresetFile = "rode_dsp_presets.json"
-
 // Preset is a complete DSP state under a name. Built-in presets ship with the
 // binary and cannot be overwritten or deleted; everything else lives in the
 // preset file and is the user's own.
@@ -31,10 +28,13 @@ type presetFile struct {
 }
 
 // PresetPath returns the absolute path to the preset file. An empty path means
-// the default.
+// the default, which sits beside the config file; see paths.go.
 func PresetPath(path string) (string, error) {
 	if path == "" {
-		return filepath.Abs(DefaultPresetFile)
+		var err error
+		if path, err = PresetPathFor(""); err != nil {
+			return "", err
+		}
 	}
 	return filepath.Abs(path)
 }

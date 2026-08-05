@@ -1,0 +1,10 @@
+# Start rode-dsp.service whenever the microphone appears.
+#
+# This fires on cold boot (systemd-udev-trigger replays "add" for every device
+# during early boot), on hotplug, and on re-enumeration after suspend. It is
+# the only trigger the service needs -- there is no separate boot-time unit.
+#
+# Kept in its own file from the uaccess rule so that installing interactive
+# access does not imply installing the service.
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="19f7", ATTRS{idProduct}=="0015", TAG+="systemd", ENV{SYSTEMD_WANTS}="rode-dsp.service"

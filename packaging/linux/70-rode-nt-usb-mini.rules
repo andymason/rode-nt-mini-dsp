@@ -1,0 +1,10 @@
+# Interactive access to the RODE NT-USB Mini's HID interface.
+#
+# uaccess hands the device to whoever is logged in at the seat, so there is no
+# group to create or join and no world-writable device node. Every systemd
+# distro supports it.
+#
+# Non-systemd distros (Alpine, Void, Gentoo/OpenRC) have no uaccess; replace
+# the tag with GROUP="plugdev" and add your user to that group.
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="19f7", ATTRS{idProduct}=="0015", MODE="0660", TAG+="uaccess"

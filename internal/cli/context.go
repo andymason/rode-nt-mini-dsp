@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"rode-dsp/internal/dsp"
@@ -16,7 +15,9 @@ type Context struct {
 	// Device is the HID device interface
 	Device *hid.Device
 
-	// ConfigPath is the path to the configuration file
+	// ConfigPath is the configuration file to use. Empty means the per-user
+	// default, resolved when the file is actually read or written so that a
+	// missing home directory is reported as an error rather than guessed at.
 	ConfigPath string
 
 	// Debug enables debug output
@@ -35,28 +36,23 @@ type Context struct {
 
 // NewContext creates a new CLI context with default values
 func NewContext() *Context {
-	// Determine default config path
-	var configPath string
-	if home, err := os.UserHomeDir(); err == nil {
-		// Check for config in home directory first
-		homeConfig := filepath.Join(home, ".rode-dsp", "config.json")
-		if _, err := os.Stat(homeConfig); err == nil {
-			configPath = homeConfig
-		}
-	}
-
-	// If no home config, use current directory default
-	if configPath == "" {
-		configPath = dsp.DefaultConfigFile
-	}
-
 	return &Context{
-		Device:     hid.NewDevice(),
-		ConfigPath: configPath,
-		Debug:      false,
-		Quiet:      false,
-		State:      dsp.NewDSPState(),
+		Device: hid.NewDevice(),
+		Debug:  false,
+		Quiet:  false,
+		State:  dsp.NewDSPState(),
 	}
+}
+
+// DisplayConfigPath is the config file in use, for messages. It resolves the
+// default and makes the path absolute, so output names a file the user can go
+// and look at.
+func (c *Context) DisplayConfigPath() string {
+	path, err := dsp.ConfigPath(c.ConfigPath)
+	if err != nil {
+		return "(unknown)"
+	}
+	return path
 }
 
 // Printf prints a formatted message to stdout unless Quiet is set.
