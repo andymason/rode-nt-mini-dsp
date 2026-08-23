@@ -34,7 +34,7 @@ func probeEffectsCommand(args []string) error {
 	fs := flag.NewFlagSet("probe-effects", flag.ExitOnError)
 	maxID := fs.Uint("max-id", 0x0F, "Highest effect ID to probe (inclusive)")
 	maxParam := fs.Uint("max-param", 0x07, "Highest parameter ID to read on each effect")
-	timeout := fs.Duration("timeout", hid.DefaultAckTimeout, "Reply wait per packet")
+	timeout := fs.Duration("timeout", hid.DefaultTimeout, "Reply wait per packet")
 	writeProbe := fs.Bool("write-probe", false,
 		"Also write a sentinel to unregistered effect IDs and read it back")
 	debug := fs.Bool("debug", false, "Enable debug output")
@@ -176,7 +176,7 @@ func probeEffectsCommand(args []string) error {
 }
 
 func init() {
-	RegisterCommand("probe-effects",
+	RegisterAdvancedCommand("probe-effects",
 		"Probe effect IDs for undocumented DSP blocks (experimental RE)",
 		probeEffectsCommand)
 }

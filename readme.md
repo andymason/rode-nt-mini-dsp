@@ -5,7 +5,20 @@ gate, aural exciter and big bottom — over USB HID.
 
 RØDE Connect is Windows and macOS only. This works anywhere Go and hidapi do.
 
-## Build
+## Install
+
+On Linux, one command does everything — it builds the tool if you have Go, puts
+it on your `PATH`, and sets up permissions:
+
+```
+sudo ./packaging/linux/install.sh
+```
+
+Add `--boot` to also re-apply your settings automatically whenever the
+microphone is plugged in. See [Linux setup](#linux-setup) for what that
+installs and how to remove it.
+
+## Build it yourself
 
 ```
 go build
@@ -32,9 +45,10 @@ Linux additionally needs the libudev development headers:
 sudo ./packaging/linux/install.sh
 ```
 
-This installs the binary to `/usr/local/bin/rode-dsp` and one udev rule, and
-reloads udev so the rule applies to the microphone already plugged in. Without
-the rule `rode-dsp` can only open the device as root.
+This builds the binary if there isn't one yet, installs it to
+`/usr/local/bin/rode-dsp` along with one udev rule, and reloads udev so the
+rule applies to the microphone already plugged in. Without the rule `rode-dsp`
+can only open the device as root.
 
 The rule matches this one device and uses systemd's `uaccess`, so access
 follows whoever is logged in at the seat: no group to create or join, no
@@ -93,14 +107,18 @@ rode-dsp comp --enable --threshold -20
 rode-dsp gate --enable --attack 0.8 --hold 80
 rode-dsp load                           # apply the saved config
 rode-dsp defaults                       # reset everything
-rode-dsp gui                            # web UI on localhost
+rode-dsp gui                            # web UI, http://127.0.0.1:8080
 ```
+
+The GUI listens on loopback only. It has no password, so anything that can
+reach it can change your settings — which is why it is not reachable from the
+rest of your network.
 
 ### Where settings live
 
 There is no config file until you change something. A fresh install writes
-nothing, and the microphone runs on its own defaults — `status`, `connect` and
-opening the GUI all leave the disk alone. The first time you set a value, from
+nothing, and the microphone runs on its own defaults — `status` and opening the
+GUI both leave the disk alone. The first time you set a value, from
 the CLI or the GUI, `config.json` is created in the platform's per-user config
 directory, with `presets.json` beside it:
 

@@ -25,7 +25,7 @@ func sendRawCommand(args []string) error {
 	fs := flag.NewFlagSet("send-raw", flag.ExitOnError)
 	confirm := fs.Bool("i-know-what-this-does", false,
 		"Required. Sends unvalidated bytes to the microphone's DSP.")
-	timeout := fs.Duration("timeout", hid.DefaultAckTimeout, "ACK wait")
+	timeout := fs.Duration("timeout", hid.DefaultTimeout, "ACK wait")
 	padTo := fs.Bool("pad", true, "Zero-pad short input to the full packet length")
 	debug := fs.Bool("debug", false, "Enable debug output")
 
@@ -90,7 +90,7 @@ func sendRawCommand(args []string) error {
 }
 
 func init() {
-	RegisterCommand("send-raw",
+	RegisterAdvancedCommand("send-raw",
 		"Send a raw HID report to the device (experimental RE; requires confirmation)",
 		sendRawCommand)
 }

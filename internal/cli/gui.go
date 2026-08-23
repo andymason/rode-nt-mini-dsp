@@ -11,14 +11,12 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
-	"time"
 
 	"rode-dsp/internal/server"
 )
 
-// guiCommand implements the "gui" command with actual HTTP server
+// guiCommand serves the web GUI on localhost until interrupted.
 func guiCommand(args []string) error {
-	// Parse flags
 	fs := flag.NewFlagSet("gui", flag.ExitOnError)
 	port := fs.Int("port", 8080, "HTTP server port")
 	openBrowser := fs.Bool("open", true, "Open browser automatically")
@@ -34,65 +32,52 @@ func guiCommand(args []string) error {
 		return err
 	}
 
-	// Create context
 	ctx := NewContext()
 	defer ctx.Close()
 
-	// Override config path if specified
 	if *configPath != "" {
 		ctx.ConfigPath = *configPath
 	}
-
-	// Set debug / quiet mode
 	ctx.Debug = *debug
 	ctx.Quiet = *quiet
 	ctx.Device.SetDebug(*debug)
 
-	// Suppress log output in quiet mode
 	if *quiet {
 		log.SetOutput(io.Discard)
 	}
 
-	// Load configuration
 	if err := ctx.LoadConfig(); err != nil {
 		log.Printf("Warning: Failed to load config: %v", err)
 	}
 
-	// Try to connect to device (non-blocking, just checks availability)
-	go func() {
-		if err := ctx.EnsureDeviceConnected(); err != nil {
-			if *debug {
-				log.Printf("Device connection (background): %v", err)
-			}
-			return
-		}
-		log.Printf("Device connected. Use 'load' command or GUI controls to apply settings.")
-	}()
+	// A missing microphone is not a reason to refuse to start: the GUI is still
+	// useful for editing settings, and it picks the device up on reload.
+	if err := ctx.EnsureDeviceConnected(); err != nil {
+		log.Printf("Microphone not connected (%v). The GUI will still open.", err)
+	}
 
-	// Create HTTP server
 	srv := server.NewServer(*port, ctx.ConfigPath, ctx.State, ctx.Device, *debug)
 
-	// Channel to signal server shutdown
+	// Bind before opening the browser, so the page is always there when it
+	// arrives. This used to be a hopeful half-second sleep.
+	ln, err := srv.Listen()
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("http://%s", ln.Addr())
+	log.Printf("Web GUI at %s — press Ctrl+C to stop", url)
+
 	serverErr := make(chan error, 1)
-
-	// Start server in a goroutine
 	go func() {
-		log.Printf("Starting RODE DSP Web GUI on http://localhost:%d", *port)
-		log.Printf("Press Ctrl+C to stop the server")
-
-		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
 	}()
 
-	// Open browser if requested
 	if *openBrowser {
-		// Give server a moment to start
-		time.Sleep(500 * time.Millisecond)
-		openURL(fmt.Sprintf("http://localhost:%d", *port))
+		openURL(url)
 	}
 
-	// Wait for interrupt signal
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
 
@@ -100,19 +85,19 @@ func guiCommand(args []string) error {
 	case err := <-serverErr:
 		return fmt.Errorf("server error: %w", err)
 	case <-interrupt:
-		log.Println("Shutting down server...")
-		log.Println("Server stopped")
+		log.Println("Stopping.")
+		ln.Close()
 	}
 
 	return nil
 }
 
-// openURL opens the specified URL in the default browser
+// openURL opens the specified URL in the default browser.
 func openURL(url string) {
 	var cmd *exec.Cmd
 
-	// Try to open browser based on OS. runtime.GOOS is the build target, not
-	// the %OS% environment variable, which is unset under most non-cmd shells.
+	// runtime.GOOS is the build target, not the %OS% environment variable,
+	// which is unset under most non-cmd shells.
 	switch runtime.GOOS {
 	case "windows":
 		// The empty "" is start's window-title argument; without it start
@@ -121,7 +106,6 @@ func openURL(url string) {
 	case "darwin":
 		cmd = exec.Command("open", url)
 	default:
-		// Try common Linux/Unix commands
 		for _, browserCmd := range []string{"xdg-open", "gio", "gnome-open", "kde-open"} {
 			path, err := exec.LookPath(browserCmd)
 			if err != nil {
@@ -136,17 +120,15 @@ func openURL(url string) {
 		}
 	}
 
-	if cmd != nil {
-		if err := cmd.Start(); err != nil {
-			log.Printf("Failed to open browser: %v", err)
-			log.Printf("Please open %s manually", url)
-		}
-	} else {
+	if cmd == nil {
 		log.Printf("Please open %s in your browser", url)
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		log.Printf("Could not open a browser (%v). Please open %s yourself.", err, url)
 	}
 }
 
-// init registers the gui command
 func init() {
-	RegisterCommand("gui", "Start HTTP server with Web GUI", guiCommand)
+	RegisterCommand("gui", "Start the web GUI on localhost", guiCommand)
 }

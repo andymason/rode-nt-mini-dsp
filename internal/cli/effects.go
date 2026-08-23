@@ -125,7 +125,6 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 				}
 			}
 
-			ctx.Device.Flush()
 			ctx.Println("OK")
 		} else {
 			ctx.Println("Device not connected. Configuration saved.")

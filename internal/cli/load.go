@@ -60,19 +60,11 @@ func loadCommand(args []string) error {
 	}
 	ctx.Println("OK")
 
-	// Send init/reset sequence
-	ctx.Printf("Sending startup handshake... ")
-	if err := ctx.Device.Handshake(); err != nil {
-		ctx.Println("FAILED")
-		return fmt.Errorf("startup handshake failed: %w", err)
-	}
-	ctx.Println("OK")
-
-	// Push all parameters and enable states to device
+	// Push every parameter and every on/off switch to the device.
 	ctx.Printf("Applying config to device... ")
-	if err := ctx.Device.SendAllParams(ctx.State); err != nil {
+	if err := ctx.Device.Apply(ctx.State); err != nil {
 		ctx.Println("FAILED")
-		return fmt.Errorf("failed to send parameters: %w", err)
+		return fmt.Errorf("failed to send settings: %w", err)
 	}
 	ctx.Println("OK")
 

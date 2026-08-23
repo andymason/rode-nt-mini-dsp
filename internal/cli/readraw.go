@@ -139,5 +139,5 @@ func readrawCommand(args []string) error {
 
 // init registers the read-raw command
 func init() {
-	RegisterCommand("read-raw", "Probe Report ID 0x03 (experimental RE)", readrawCommand)
+	RegisterAdvancedCommand("read-raw", "Probe Report ID 0x03 (experimental RE)", readrawCommand)
 }

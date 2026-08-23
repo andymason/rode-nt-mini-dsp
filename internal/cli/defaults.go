@@ -61,19 +61,12 @@ func defaultsCommand(args []string) error {
 			return fmt.Errorf("cannot send to device: %w", err)
 		}
 
-		// Send initialization packets
-		ctx.Printf("Sending initialization packets... ")
-		if err := ctx.Device.Handshake(); err != nil {
+		// Apply writes the off switches too, which is what makes this a
+		// reset rather than "set every value but leave the effects running".
+		ctx.Printf("Sending defaults to device... ")
+		if err := ctx.Device.Apply(ctx.State); err != nil {
 			ctx.Println("FAILED")
-			return fmt.Errorf("failed to send init packets: %w", err)
-		}
-		ctx.Println("OK")
-
-		// Send all parameters (including disabled state)
-		ctx.Printf("Sending default parameters... ")
-		if err := ctx.Device.SendAllParams(ctx.State); err != nil {
-			ctx.Println("FAILED")
-			return fmt.Errorf("failed to send parameters: %w", err)
+			return fmt.Errorf("failed to send settings: %w", err)
 		}
 		ctx.Println("OK")
 
