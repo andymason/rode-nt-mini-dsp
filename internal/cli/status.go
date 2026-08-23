@@ -12,10 +12,7 @@ import (
 func statusCommand(args []string) error {
 	// Parse flags
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
-	debug := fs.Bool("debug", false, "Enable debug output")
-	quiet := fs.Bool("quiet", false, "Suppress progress output (errors still go to stderr)")
-	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
+	std := addStdFlags(fs)
 	asJSON := fs.Bool("json", false, "Output DSP state as JSON (machine-readable, useful in scripts)")
 	fromConfig := fs.Bool("config-only", false,
 		"Show the local config instead of querying the device")
@@ -27,19 +24,8 @@ func statusCommand(args []string) error {
 		return err
 	}
 
-	// Create context
-	ctx := NewContext()
+	ctx := std.context()
 	defer ctx.Close()
-
-	// Override config path if specified
-	if *configPath != "" {
-		ctx.ConfigPath = *configPath
-	}
-
-	// Set debug / quiet mode
-	ctx.Debug = *debug
-	ctx.Quiet = *quiet
-	ctx.Device.SetDebug(*debug)
 
 	// Load configuration
 	if err := ctx.LoadConfig(); err != nil {

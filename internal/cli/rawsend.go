@@ -69,7 +69,6 @@ func sendRawCommand(args []string) error {
 	defer ctx.Close()
 
 	ctx.Debug = *debug
-	ctx.Device.SetDebug(*debug)
 
 	if err := ctx.EnsureDeviceConnected(); err != nil {
 		return fmt.Errorf("device not connected: %w", err)

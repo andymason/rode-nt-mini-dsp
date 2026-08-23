@@ -141,20 +141,18 @@ type Server struct {
 	configPath string
 	dspState   *dsp.DSPState
 	device     *hid.Device
-	debug      bool
 
 	mu      sync.Mutex
 	clients map[*Client]bool
 }
 
-// NewServer creates a new HTTP server with WebSocket support
-func NewServer(port int, configPath string, dspState *dsp.DSPState, device *hid.Device, debug bool) *Server {
+// NewServer creates a new HTTP server with WebSocket support.
+func NewServer(port int, configPath string, dspState *dsp.DSPState, device *hid.Device) *Server {
 	return &Server{
 		port:       port,
 		configPath: configPath,
 		dspState:   dspState,
 		device:     device,
-		debug:      debug,
 		clients:    make(map[*Client]bool),
 	}
 }

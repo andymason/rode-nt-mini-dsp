@@ -20,10 +20,7 @@ func guiCommand(args []string) error {
 	fs := flag.NewFlagSet("gui", flag.ExitOnError)
 	port := fs.Int("port", 8080, "HTTP server port")
 	openBrowser := fs.Bool("open", true, "Open browser automatically")
-	configPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
-	debug := fs.Bool("debug", false, "Enable debug output")
-	quiet := fs.Bool("quiet", false, "Suppress log output (useful when running as a systemd service)")
-	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
+	std := addStdFlags(fs)
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -32,17 +29,10 @@ func guiCommand(args []string) error {
 		return err
 	}
 
-	ctx := NewContext()
+	ctx := std.context()
 	defer ctx.Close()
 
-	if *configPath != "" {
-		ctx.ConfigPath = *configPath
-	}
-	ctx.Debug = *debug
-	ctx.Quiet = *quiet
-	ctx.Device.SetDebug(*debug)
-
-	if *quiet {
+	if ctx.Quiet {
 		log.SetOutput(io.Discard)
 	}
 
@@ -56,7 +46,7 @@ func guiCommand(args []string) error {
 		log.Printf("Microphone not connected (%v). The GUI will still open.", err)
 	}
 
-	srv := server.NewServer(*port, ctx.ConfigPath, ctx.State, ctx.Device, *debug)
+	srv := server.NewServer(*port, ctx.ConfigPath, ctx.State, ctx.Device)
 
 	// Bind before opening the browser, so the page is always there when it
 	// arrives. This used to be a hopeful half-second sleep.
