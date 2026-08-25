@@ -6,22 +6,28 @@ on:
   pull_request:
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  # The whole tool, on the three platforms it claims to support. cgo means
+  # these cannot be cross-compiled, so each one has to build on its own runner.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
 
-      # sstallion/go-hid binds hidapi, which needs libudev on Linux.
-      # internal/protocol and internal/dsp build without it, but the cli,
-      # server and hid packages do not.
+      # hidapi needs libudev on Linux; macOS and Windows use frameworks that
+      # are already present.
       - name: Install libudev
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
       - name: Check formatting
+        if: runner.os == 'Linux'
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
@@ -40,9 +46,9 @@ jobs:
       - name: Test
         run: go test -race ./...
 
-  # The encoder and registry tests are the correctness-critical ones and have no
-  # cgo dependency. Running them without libudev keeps that true, so the tables
-  # can be verified on any machine.
+  # The encoder and lookup-table tests are the correctness-critical ones and
+  # have no cgo dependency. Running them without libudev keeps that true, so
+  # anyone can verify the tables on any machine.
   test-no-cgo:
     runs-on: ubuntu-latest
     steps:

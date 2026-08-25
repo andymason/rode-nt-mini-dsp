@@ -200,7 +200,7 @@ func (s *DSPState) MarshalJSON() ([]byte, error) {
 
 	// Build ordered output using effect ID order for consistency
 	effectIDs := []byte{0x00, 0x01, 0x02, 0x03}
-	data := make(map[string]interface{}, len(effectIDs))
+	data := make(map[string]any, len(effectIDs))
 
 	for _, effID := range effectIDs {
 		effect, ok := Effects[effID]
@@ -208,7 +208,7 @@ func (s *DSPState) MarshalJSON() ([]byte, error) {
 			continue
 		}
 		effKey := toConfigKey(effect.Name)
-		effData := make(map[string]interface{}, len(effect.Params)+1)
+		effData := make(map[string]any, len(effect.Params)+1)
 		effData["enabled"] = s.enabled[effID]
 
 		if paramMap, ok := s.params[effID]; ok {

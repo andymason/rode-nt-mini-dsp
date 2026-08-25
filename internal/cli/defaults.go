@@ -9,11 +9,8 @@ import (
 func defaultsCommand(args []string) error {
 	// Parse flags
 	fs := flag.NewFlagSet("defaults", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
+	std := addStdFlags(fs)
 	sendToDevice := fs.Bool("send", false, "Send defaults to device (requires connection)")
-	debug := fs.Bool("debug", false, "Enable debug output")
-	quiet := fs.Bool("quiet", false, "Suppress progress output (errors still go to stderr)")
-	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -22,19 +19,8 @@ func defaultsCommand(args []string) error {
 		return err
 	}
 
-	// Create context
-	ctx := NewContext()
+	ctx := std.context()
 	defer ctx.Close()
-
-	// Override config path if specified
-	if *configPath != "" {
-		ctx.ConfigPath = *configPath
-	}
-
-	// Set debug / quiet mode
-	ctx.Debug = *debug
-	ctx.Quiet = *quiet
-	ctx.Device.SetDebug(*debug)
 
 	// Load current config (if it exists)
 	if err := ctx.LoadConfig(); err != nil {
@@ -61,19 +47,12 @@ func defaultsCommand(args []string) error {
 			return fmt.Errorf("cannot send to device: %w", err)
 		}
 
-		// Send initialization packets
-		ctx.Printf("Sending initialization packets... ")
-		if err := ctx.Device.Handshake(); err != nil {
+		// Apply writes the off switches too, which is what makes this a
+		// reset rather than "set every value but leave the effects running".
+		ctx.Printf("Sending defaults to device... ")
+		if err := ctx.Device.Apply(ctx.State); err != nil {
 			ctx.Println("FAILED")
-			return fmt.Errorf("failed to send init packets: %w", err)
-		}
-		ctx.Println("OK")
-
-		// Send all parameters (including disabled state)
-		ctx.Printf("Sending default parameters... ")
-		if err := ctx.Device.SendAllParams(ctx.State); err != nil {
-			ctx.Println("FAILED")
-			return fmt.Errorf("failed to send parameters: %w", err)
+			return fmt.Errorf("failed to send settings: %w", err)
 		}
 		ctx.Println("OK")
 

@@ -26,10 +26,7 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 		fs := flag.NewFlagSet(cmdName, flag.ExitOnError)
 		enable := fs.Bool("enable", false, "Enable "+effDef.Name+" effect")
 		disable := fs.Bool("disable", false, "Disable "+effDef.Name+" effect")
-		cfgPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
-		debug := fs.Bool("debug", false, "Enable debug output")
-		quiet := fs.Bool("quiet", false, "Suppress progress output (errors still go to stderr)")
-		fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
+		std := addStdFlags(fs)
 
 		// Register a float64 flag for every parameter, keyed by lowercase name.
 		paramPtrs := make(map[string]*float64, len(effDef.Params))
@@ -62,15 +59,8 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 			return fmt.Errorf("no parameters specified; use --help for usage")
 		}
 
-		ctx := NewContext()
+		ctx := std.context()
 		defer ctx.Close()
-
-		if *cfgPath != "" {
-			ctx.ConfigPath = *cfgPath
-		}
-		ctx.Debug = *debug
-		ctx.Quiet = *quiet
-		ctx.Device.SetDebug(*debug)
 
 		if err := ctx.LoadConfig(); err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
@@ -125,7 +115,6 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 				}
 			}
 
-			ctx.Device.Flush()
 			ctx.Println("OK")
 		} else {
 			ctx.Println("Device not connected. Configuration saved.")

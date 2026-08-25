@@ -12,10 +12,7 @@ import (
 // all settings to the connected USB microphone.
 func loadCommand(args []string) error {
 	fs := flag.NewFlagSet("load", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file (default: auto-detect)")
-	debug := fs.Bool("debug", false, "Enable debug output")
-	quiet := fs.Bool("quiet", false, "Suppress progress output (errors still go to stderr)")
-	fs.BoolVar(quiet, "q", false, "Shorthand for --quiet")
+	std := addStdFlags(fs)
 	wait := fs.Int("wait", 0, "Seconds to wait for device to appear (useful in boot scripts)")
 
 	if err := fs.Parse(args); err != nil {
@@ -25,16 +22,8 @@ func loadCommand(args []string) error {
 		return err
 	}
 
-	// Create context
-	ctx := NewContext()
+	ctx := std.context()
 	defer ctx.Close()
-
-	if *configPath != "" {
-		ctx.ConfigPath = *configPath
-	}
-	ctx.Debug = *debug
-	ctx.Quiet = *quiet
-	ctx.Device.SetDebug(*debug)
 
 	// Check config exists
 	exists, err := dsp.ConfigExists(ctx.ConfigPath)
@@ -60,19 +49,11 @@ func loadCommand(args []string) error {
 	}
 	ctx.Println("OK")
 
-	// Send init/reset sequence
-	ctx.Printf("Sending startup handshake... ")
-	if err := ctx.Device.Handshake(); err != nil {
-		ctx.Println("FAILED")
-		return fmt.Errorf("startup handshake failed: %w", err)
-	}
-	ctx.Println("OK")
-
-	// Push all parameters and enable states to device
+	// Push every parameter and every on/off switch to the device.
 	ctx.Printf("Applying config to device... ")
-	if err := ctx.Device.SendAllParams(ctx.State); err != nil {
+	if err := ctx.Device.Apply(ctx.State); err != nil {
 		ctx.Println("FAILED")
-		return fmt.Errorf("failed to send parameters: %w", err)
+		return fmt.Errorf("failed to send settings: %w", err)
 	}
 	ctx.Println("OK")
 

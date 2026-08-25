@@ -253,40 +253,16 @@ func DeleteUserPreset(path, name string) error {
 	return writeUserPresets(path, kept)
 }
 
-// writeUserPresets replaces the preset file, using the same temp-file-and-rename
-// dance as SaveConfig so an interrupted write cannot leave a half-written file
-// where the user's presets used to be.
+// writeUserPresets replaces the preset file.
 func writeUserPresets(path string, presets []Preset) error {
 	presetPath, err := PresetPath(path)
 	if err != nil {
 		return fmt.Errorf("failed to resolve preset path: %w", err)
 	}
-
-	dir := filepath.Dir(presetPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", dir, err)
-	}
-
 	if presets == nil {
 		presets = []Preset{}
 	}
-	data, err := json.MarshalIndent(presetFile{Presets: presets}, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal presets: %w", err)
-	}
-
-	fileMu.Lock()
-	defer fileMu.Unlock()
-
-	tmpPath := presetPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write temp preset file: %w", err)
-	}
-	if err := os.Rename(tmpPath, presetPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to finalize preset file %s: %w", presetPath, err)
-	}
-	return nil
+	return writeJSON(presetPath, presetFile{Presets: presets})
 }
 
 // CopyInto overwrites dst with the preset's state, in place. The server, the CLI

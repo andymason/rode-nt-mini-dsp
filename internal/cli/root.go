@@ -4,14 +4,22 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
+
+	"rode-dsp/internal/dsp"
 )
 
-// Command represents a CLI command
+// Command is one subcommand. Each one parses its own flags, so there is no
+// shared FlagSet to keep in step.
 type Command struct {
 	Name        string
 	Description string
 	Run         func(args []string) error
-	Flags       *flag.FlagSet
+
+	// Advanced keeps a command out of the main help listing. The
+	// reverse-engineering commands are useful about once a year and would
+	// otherwise be the first thing a new user reads.
+	Advanced bool
 }
 
 // Commands registry
@@ -19,12 +27,15 @@ var commands = make(map[string]*Command)
 
 // RegisterCommand registers a new command
 func RegisterCommand(name, description string, run func(args []string) error) *Command {
-	cmd := &Command{
-		Name:        name,
-		Description: description,
-		Run:         run,
-	}
+	cmd := &Command{Name: name, Description: description, Run: run}
 	commands[name] = cmd
+	return cmd
+}
+
+// RegisterAdvancedCommand registers a command shown only under "Advanced".
+func RegisterAdvancedCommand(name, description string, run func(args []string) error) *Command {
+	cmd := RegisterCommand(name, description, run)
+	cmd.Advanced = true
 	return cmd
 }
 
@@ -40,14 +51,6 @@ func Dispatch(args []string) error {
 	if !exists {
 		Usage()
 		return fmt.Errorf("unknown command: %s", cmdName)
-	}
-
-	// Parse flags if the command has a FlagSet
-	if cmd.Flags != nil {
-		if err := cmd.Flags.Parse(args[1:]); err != nil {
-			return err
-		}
-		return cmd.Run(cmd.Flags.Args())
 	}
 
 	return cmd.Run(args[1:])
@@ -80,30 +83,47 @@ func BriefStatus() {
 	}
 }
 
-// Usage prints the CLI usage information
+// Usage prints the CLI usage information.
 func Usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s <command> [options]\n\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "Commands:\n")
+	prog := os.Args[0]
 
-	// List all registered commands
-	for name, cmd := range commands {
-		fmt.Fprintf(os.Stderr, "  %-15s %s\n", name, cmd.Description)
-	}
+	fmt.Fprintf(os.Stderr, "Usage: %s <command> [options]\n\n", prog)
 
-	fmt.Fprintf(os.Stderr, "\nExamples:\n")
-	fmt.Fprintf(os.Stderr, "  %s status\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "  %s gui\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "  %s comp --enable --threshold -20\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "\nUse \"%s <command> -help\" for command-specific help\n", os.Args[0])
+	listCommands("Commands:", false)
+	listCommands("Advanced (protocol work; you will not need these):", true)
+
+	fmt.Fprintf(os.Stderr, `Examples:
+  %[1]s status                          what the microphone is set to now
+  %[1]s gui                             open the web interface
+  %[1]s comp --enable --threshold -20   turn the compressor on
+  %[1]s load                            re-apply your saved settings
+
+Settings are saved automatically. On Linux, "sudo ./packaging/linux/install.sh
+--boot" re-applies them every time the microphone is plugged in.
+
+Environment:
+  %[2]s   config file to use (overridden by --config)
+
+Run "%[1]s <command> -help" for a command's own options.
+`, prog, dsp.ConfigEnvVar)
 }
 
-// AddCommand adds a command with its flagset (for commands that need flags)
-func AddCommand(name, description string, flags *flag.FlagSet, run func(args []string) error) {
-	cmd := &Command{
-		Name:        name,
-		Description: description,
-		Run:         run,
-		Flags:       flags,
+// listCommands prints one section of the help, in name order.
+func listCommands(heading string, advanced bool) {
+	names := make([]string, 0, len(commands))
+	for name, cmd := range commands {
+		if cmd.Advanced == advanced {
+			names = append(names, name)
+		}
 	}
-	commands[name] = cmd
+	if len(names) == 0 {
+		return
+	}
+	sort.Strings(names)
+
+	fmt.Fprintf(os.Stderr, "%s\n", heading)
+	for _, name := range names {
+		fmt.Fprintf(os.Stderr, "  %-14s %s\n", name, commands[name].Description)
+	}
+	fmt.Fprintln(os.Stderr)
 }

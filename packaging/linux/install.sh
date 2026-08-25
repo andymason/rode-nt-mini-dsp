@@ -81,7 +81,19 @@ esac
 # Everything is checked before anything is written, so a failure here cannot
 # leave a half-installed system.
 need udevadm "this installer needs udev"
-[ -x "$REPO/rode-dsp" ] || die "no rode-dsp binary in $REPO -- run 'go build' first"
+
+# Build if there is nothing to install, rather than sending the user away to do
+# it. Under sudo this builds with root's module cache, which is a download, not
+# a mess in anyone's home directory.
+if [ ! -x "$REPO/rode-dsp" ]; then
+	command -v go >/dev/null ||
+		die "there is no rode-dsp binary here and no Go toolchain to build one.
+  Install Go from https://go.dev/dl/ and run this again."
+	echo "Building rode-dsp..."
+	(cd "$REPO" && go build) ||
+		die "the build failed.
+  On Debian or Ubuntu this usually means: sudo apt install libudev-dev"
+fi
 
 if [ "${1:-}" = "--boot" ]; then
 	# The service unit is systemd; see the readme for the group-based

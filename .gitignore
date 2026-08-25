@@ -243,3 +243,6 @@ $RECYCLE.BIN/
 *.pcapng
 
 .claude
+# The tool itself, built by "go build".
+/rode-dsp
+/rode-dsp.exe
