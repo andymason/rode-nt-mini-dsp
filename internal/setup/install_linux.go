@@ -90,9 +90,9 @@ func Remove(o Options) error {
 		_ = reloadDevices()
 	}
 
-	fmt.Println("Removed.")
+	fmt.Println("Removed. Saved settings were kept.")
 	fmt.Println()
-	fmt.Println("Your settings were kept. Delete this folder if you want them gone too:")
+	fmt.Println("Delete this folder to remove those too:")
 	if dir := filepath.Dir(o.Config); dir != "" && dir != "." {
 		fmt.Printf("  %s\n", dir)
 	} else {
@@ -101,15 +101,15 @@ func Remove(o Options) error {
 	return nil
 }
 
-// checkTools makes sure the two system commands this needs are present, before
-// asking for a password.
+// checkTools confirms the two system commands this needs are present, before a
+// password is asked for.
 func checkTools(boot bool) error {
 	if !have("udevadm") {
-		return errors.New("this computer has no udevadm, which setup needs to give you access to the microphone")
+		return errors.New("udevadm is not installed, and setup needs it to grant access to the microphone")
 	}
 	if boot && !have("systemctl") {
-		return errors.New("this computer does not use systemd, so settings cannot be sent at startup.\n" +
-			"  Run \"setup --no-boot\" to install the rest, then \"rode-dsp load\" when you want your settings")
+		return errors.New("systemd is not in use, so settings cannot be sent at startup.\n" +
+			"  Run \"setup --no-boot\" to install the rest, then \"rode-dsp load\" to send settings")
 	}
 	return nil
 }
@@ -119,23 +119,23 @@ func have(cmd string) bool {
 	return err == nil
 }
 
-// elevate runs this same command again as administrator. The user types one
-// command and answers one password prompt.
+// elevate runs this same command again as root, so that one typed command and
+// one password prompt are all that setup costs.
 func elevate(o Options) error {
 	sudo, err := exec.LookPath("sudo")
 	if err != nil {
-		return errors.New("setup needs administrator rights. Run it again as root")
+		return errors.New("setup requires root. Run it again as root")
 	}
 	self, err := selfPath()
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("Setup needs administrator rights, so it will ask for your password.")
+	fmt.Println("Setup requires root, so a password will be requested.")
 	cmd := exec.Command(sudo, append([]string{self}, o.argv()...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("setup did not finish: %w", err)
+		return fmt.Errorf("setup did not complete: %w", err)
 	}
 	return nil
 }
@@ -234,29 +234,25 @@ func run(name string, args ...string) error {
 	return nil
 }
 
-// report tells the user what happened and what to do next, in that order.
+// report states what was installed and what remains to be done, in that order.
 func report(o Options, binPath string) {
 	fmt.Println()
-	fmt.Println("Done. Your microphone is ready.")
+	fmt.Println("Setup complete.")
 	fmt.Println()
 	fmt.Printf("  Program   %s\n", binPath)
 	fmt.Printf("  Settings  %s\n", o.Config)
 	fmt.Println()
 
 	if o.Boot {
-		fmt.Println("Your settings will go to the microphone every time you start this")
-		fmt.Println("computer or plug the microphone in.")
+		fmt.Println("Settings are sent to the microphone whenever it is detected.")
 	} else {
-		fmt.Println("Your settings will not be sent automatically. Run \"rode-dsp load\"")
-		fmt.Println("when you want them.")
+		fmt.Println("Settings are not sent automatically. Run \"rode-dsp load\" to send them.")
 	}
 
 	if _, err := os.Stat(o.Config); err != nil {
-		fmt.Println()
-		fmt.Println("You have not chosen any settings yet, so the microphone is using its own.")
+		fmt.Println("No settings have been chosen yet, so the microphone's own defaults apply.")
 	}
 
 	fmt.Println()
-	fmt.Println("Next, open the settings page:")
-	fmt.Println("  rode-dsp gui")
+	fmt.Println("Run \"rode-dsp gui\" to choose settings.")
 }

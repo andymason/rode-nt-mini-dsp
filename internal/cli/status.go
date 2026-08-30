@@ -99,5 +99,5 @@ func statusCommand(args []string) error {
 
 // init registers the status command
 func init() {
-	RegisterCommand("status", "Show what the microphone is set to now", statusCommand)
+	RegisterCommand("status", "Report the microphone's current values", statusCommand)
 }

@@ -65,5 +65,5 @@ func loadCommand(args []string) error {
 
 // init registers the load command
 func init() {
-	RegisterCommand("load", "Send your saved settings to the microphone", loadCommand)
+	RegisterCommand("load", "Send the saved settings to the microphone", loadCommand)
 }

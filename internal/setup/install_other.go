@@ -21,21 +21,20 @@ func Apply(o Options) error {
 		return printPlan(os.Stdout, o, self)
 	}
 
-	fmt.Println("There is nothing to set up on this computer.")
+	fmt.Println("Nothing needs to be set up on this computer.")
 	fmt.Println()
-	fmt.Println("Open the settings page whenever you want to change your sound:")
-	fmt.Println("  rode-dsp gui")
+	fmt.Println("Run \"rode-dsp gui\" to change settings.")
 	fmt.Println()
-	fmt.Println("This microphone forgets its settings when it loses power, so run")
-	fmt.Println("\"rode-dsp load\" to put them back. RODE Connect can do this for you.")
+	fmt.Println("The microphone loses its settings when it loses power. Run \"rode-dsp load\"")
+	fmt.Println("to send them again, or use RODE Connect, which does this automatically.")
 	return nil
 }
 
 // Remove has nothing to undo, and says so.
 func Remove(Options) error {
-	fmt.Println("There was nothing to remove on this computer.")
+	fmt.Println("Nothing was installed on this computer, so nothing was removed.")
 	fmt.Println()
-	fmt.Println("Delete the rode-dsp program yourself, and its settings folder if you")
-	fmt.Println("want those gone too.")
+	fmt.Println("Delete the rode-dsp program manually, and its settings folder to remove")
+	fmt.Println("saved settings too.")
 	return nil
 }

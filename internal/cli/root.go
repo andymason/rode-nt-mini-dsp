@@ -75,10 +75,10 @@ func noExtraArgs(fs *flag.FlagSet) error {
 
 // BriefStatus prints a short connection status without config details.
 //
-// This is what someone sees when they run a freshly downloaded program with no
-// arguments, so it is also where the first instruction belongs.
+// This is what a freshly downloaded program prints when run with no arguments,
+// so it is also where the first instruction belongs.
 func BriefStatus() {
-	fmt.Fprintf(os.Stderr, "RODE NT-USB Mini sound settings\n\n")
+	fmt.Fprintf(os.Stderr, "rode-dsp: RODE NT-USB Mini sound processing\n\n")
 	ctx := NewContext()
 	defer ctx.Close()
 	if err := ctx.EnsureDeviceConnected(); err != nil {
@@ -91,9 +91,9 @@ func BriefStatus() {
 	}
 }
 
-// setupHint tells a first-time user what to do, and says nothing once setup has
-// run. The access rule is the marker because it is the file that has to exist
-// before the microphone can be reached without sudo.
+// setupHint names the first step until setup has run, and says nothing after.
+// The access rule is the marker: it is the file that must exist before the
+// microphone can be opened without sudo.
 func setupHint() string {
 	if runtime.GOOS != "linux" {
 		return ""
@@ -101,7 +101,7 @@ func setupHint() string {
 	if _, err := os.Stat("/etc/udev/rules.d/70-rode-nt-usb-mini.rules"); err == nil {
 		return ""
 	}
-	return "Not set up yet. Run:\n  sudo " + os.Args[0] + " setup"
+	return "Not installed. Run:\n  sudo " + os.Args[0] + " setup"
 }
 
 // Usage prints the CLI usage information.
@@ -111,24 +111,22 @@ func Usage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s <command> [options]\n\n", prog)
 
 	listCommands("Commands:", false)
-	listCommands("Advanced (for working on the protocol; you will not need these):", true)
+	listCommands("Advanced (protocol work only):", true)
 
-	fmt.Fprintf(os.Stderr, `Getting started:
-  sudo %[1]s setup    set this up once
-  %[1]s gui           choose how you want to sound
+	fmt.Fprintf(os.Stderr, `Examples:
+  sudo %[1]s setup                      install, and reapply at startup
+  %[1]s gui                             open the settings page
+  %[1]s status                          report the current values
+  %[1]s comp --enable --threshold -20   enable the compressor
+  %[1]s load                            send the saved settings again
 
-Examples:
-  %[1]s status                          what the microphone is set to now
-  %[1]s comp --enable --threshold -20   turn the compressor on
-  %[1]s load                            send your saved settings again
-
-Your settings are saved as you make them. After setup they go to the
-microphone every time you start the computer or plug the microphone in.
+Settings are saved when changed. After setup they are sent to the microphone
+whenever it is detected.
 
 Environment:
   %[2]s   the settings file to use (--config wins)
 
-Run "%[1]s <command> -help" for that command's own options.
+"%[1]s <command> -help" lists that command's options.
 `, prog, dsp.ConfigEnvVar)
 }
 

@@ -65,33 +65,32 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	noBoot := fs.Bool("no-boot", false, "Do not send your settings automatically at startup")
-	remove := fs.Bool("remove", false, "Undo setup. Your settings are kept")
-	dryRun := fs.Bool("dry-run", false, "Show the files setup would write, and write nothing")
-	username := fs.String("user", "", "Whose settings the startup service should send")
-	config := fs.String("config", "", "The settings file the startup service should read")
+	noBoot := fs.Bool("no-boot", false, "Do not send settings automatically at startup")
+	remove := fs.Bool("remove", false, "Undo setup. Saved settings are kept")
+	dryRun := fs.Bool("dry-run", false, "Print the files setup would write, and write nothing")
+	username := fs.String("user", "", "Account whose settings the startup service sends")
+	config := fs.String("config", "", "Settings file the startup service reads")
 
 	// Where things go. The defaults follow the usual split: a program you
 	// installed yourself in /usr/local/bin, rules and services an administrator
 	// installed in /etc. Both the flag and the matching environment variable
 	// exist because the flags are what survive the step up to administrator.
-	binDir := fs.String("bin-dir", envOr("BIN_DIR", "/usr/local/bin"), "Where to put the program")
-	udevDir := fs.String("udev-dir", envOr("UDEV_DIR", "/etc/udev/rules.d"), "Where to put the device rules")
-	unitDir := fs.String("unit-dir", envOr("UNIT_DIR", "/etc/systemd/system"), "Where to put the startup service")
+	binDir := fs.String("bin-dir", envOr("BIN_DIR", "/usr/local/bin"), "Destination for the program")
+	udevDir := fs.String("udev-dir", envOr("UDEV_DIR", "/etc/udev/rules.d"), "Destination for the device rules")
+	unitDir := fs.String("unit-dir", envOr("UNIT_DIR", "/etc/systemd/system"), "Destination for the startup service")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Usage: %s setup [options]
 
-Sets this up on your computer. Run it once. After that your settings go to
-the microphone every time you start the computer or plug the microphone in.
+Installs the program, grants access to the microphone, and installs a service
+that sends the saved settings whenever the microphone is detected. Run once.
 
-Setup asks for your password, because it installs the program for everyone
-on this computer.
+Root is required, so a password will be requested.
 
 Options:
 `, os.Args[0])
 		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nTo see the exact files this installs, run \"%s setup --dry-run\".\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\n\"%s setup --dry-run\" prints the exact files this installs.\n", os.Args[0])
 	}
 
 	if err := fs.Parse(args); err != nil {
@@ -103,7 +102,7 @@ Options:
 		return err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("setup does not take %q", fs.Arg(0))
+		return fmt.Errorf("setup takes no arguments, but %q was given", fs.Arg(0))
 	}
 
 	opts := Options{
@@ -206,8 +205,8 @@ func configPathFor(username string) (string, error) {
 	var err error
 	if username == "" {
 		if os.Geteuid() == 0 {
-			return "", errors.New("cannot tell whose settings to send.\n" +
-				"  Run this with sudo from your own account, or name the account with --user")
+			return "", errors.New("the account whose settings to send is unknown.\n" +
+				"  Run this with sudo from that account, or name it with --user")
 		}
 		u, err = user.Current()
 	} else {
@@ -215,12 +214,12 @@ func configPathFor(username string) (string, error) {
 	}
 	if err != nil {
 		if username == "" {
-			return "", fmt.Errorf("cannot work out which account is running this: %w", err)
+			return "", fmt.Errorf("the account running this could not be determined: %w", err)
 		}
-		return "", fmt.Errorf("cannot find the account %q on this computer: %w", username, err)
+		return "", fmt.Errorf("the account %q was not found on this computer: %w", username, err)
 	}
 	if u.HomeDir == "" {
-		return "", fmt.Errorf("the account %q has no home folder, so name the settings file with --config", u.Username)
+		return "", fmt.Errorf("the account %q has no home folder; name the settings file with --config", u.Username)
 	}
 
 	return configPathIn(u.HomeDir, os.Getenv("XDG_CONFIG_HOME")), nil
@@ -259,7 +258,7 @@ func printPlan(w io.Writer, o Options, self string) error {
 		return err
 	}
 
-	fmt.Fprintf(w, "Setup would write these files. Nothing has been changed.\n\n")
+	fmt.Fprintf(w, "Setup would write the files below. Nothing has been changed.\n\n")
 	fmt.Fprintf(w, "Copy the program\n  from  %s\n  to    %s\n\n", self, filepath.Join(o.BinDir, binName))
 
 	for _, f := range items {
@@ -269,7 +268,7 @@ func printPlan(w io.Writer, o Options, self string) error {
 	}
 
 	if o.Boot {
-		fmt.Fprintf(w, "It would then reload the system's device and service settings.\n")
+		fmt.Fprintf(w, "The device and service configuration would then be reloaded.\n")
 	}
 	return nil
 }

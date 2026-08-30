@@ -139,8 +139,8 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 }
 
 func init() {
-	RegisterCommand("comp", "Compressor: even out your volume", makeEffectCommand("comp", protocol.EffComp))
-	RegisterCommand("gate", "Noise gate: quieten the background", makeEffectCommand("gate", protocol.EffGate))
+	RegisterCommand("comp", "Compressor: even out loud and quiet passages", makeEffectCommand("comp", protocol.EffComp))
+	RegisterCommand("gate", "Noise gate: attenuate background sound", makeEffectCommand("gate", protocol.EffGate))
 	RegisterCommand("ae", "Aural exciter: add clarity", makeEffectCommand("ae", protocol.EffAE))
-	RegisterCommand("bb", "Big bottom: add warmth", makeEffectCommand("bb", protocol.EffBB))
+	RegisterCommand("bb", "Big bottom: add low-end weight", makeEffectCommand("bb", protocol.EffBB))
 }

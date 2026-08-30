@@ -4,6 +4,6 @@ import "rode-dsp/internal/setup"
 
 func init() {
 	RegisterCommand("setup",
-		"Set this up, and keep your settings after a restart",
+		"Install, and reapply settings at startup",
 		setup.Run)
 }
