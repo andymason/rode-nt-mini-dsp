@@ -14,7 +14,7 @@ import (
 // microphone is readable as it is, and RODE Connect already runs on both.
 func Apply(o Options) error {
 	if o.DryRun {
-		self, err := selfPathOrName()
+		self, err := selfPath()
 		if err != nil {
 			return err
 		}
@@ -38,12 +38,4 @@ func Remove(Options) error {
 	fmt.Println("Delete the rode-dsp program yourself, and its settings folder if you")
 	fmt.Println("want those gone too.")
 	return nil
-}
-
-func selfPathOrName() (string, error) {
-	self, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("cannot find this program on disk: %w", err)
-	}
-	return self, nil
 }

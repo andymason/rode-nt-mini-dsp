@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -44,7 +45,7 @@ func RegisterAdvancedCommand(name, description string, run func(args []string) e
 func Dispatch(args []string) error {
 	if len(args) < 1 {
 		Usage()
-		return fmt.Errorf("no command specified")
+		return errors.New("no command specified")
 	}
 
 	cmdName := args[0]

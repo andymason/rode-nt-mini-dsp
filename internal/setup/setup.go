@@ -135,8 +135,8 @@ Options:
 	return Apply(opts)
 }
 
-// envOr reads an override from the environment, keeping the same names the
-// shell installer used.
+// envOr reads a default from the environment. The matching flag still wins,
+// which is what carries a choice across the step up to administrator.
 func envOr(name, fallback string) string {
 	if v := os.Getenv(name); v != "" {
 		return v
@@ -206,7 +206,7 @@ func configPathFor(username string) (string, error) {
 	var err error
 	if username == "" {
 		if os.Geteuid() == 0 {
-			return "", fmt.Errorf("cannot tell whose settings to send.\n" +
+			return "", errors.New("cannot tell whose settings to send.\n" +
 				"  Run this with sudo from your own account, or name the account with --user")
 		}
 		u, err = user.Current()
@@ -214,6 +214,9 @@ func configPathFor(username string) (string, error) {
 		u, err = user.Lookup(username)
 	}
 	if err != nil {
+		if username == "" {
+			return "", fmt.Errorf("cannot work out which account is running this: %w", err)
+		}
 		return "", fmt.Errorf("cannot find the account %q on this computer: %w", username, err)
 	}
 	if u.HomeDir == "" {
@@ -232,6 +235,20 @@ func configPathIn(home, xdgConfigHome string) string {
 		base = filepath.Join(home, ".config")
 	}
 	return filepath.Join(base, "rode-dsp", "config.json")
+}
+
+// selfPath is the program that is running, which is what gets installed. A
+// symlink is followed so that copying reaches the real file rather than the
+// link.
+func selfPath() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("cannot find this program on disk: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		return resolved, nil
+	}
+	return self, nil
 }
 
 // printPlan shows what would be written without writing it. This is also the

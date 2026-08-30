@@ -5,6 +5,7 @@ package cli
 // only requires an entry in dsp.Effects — no new command file is needed.
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -56,7 +57,7 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 			}
 		}
 		if !actionSet {
-			return fmt.Errorf("no parameters specified; use --help for usage")
+			return errors.New("no parameters specified; use --help for usage")
 		}
 
 		ctx := std.context()
@@ -68,7 +69,7 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 
 		// Apply enable / disable.
 		if *enable && *disable {
-			return fmt.Errorf("cannot specify both --enable and --disable")
+			return errors.New("cannot specify both --enable and --disable")
 		}
 		if *enable {
 			ctx.State.SetEnabled(effID, true)

@@ -84,7 +84,7 @@ func TestBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening baseline (regenerate with -update-baseline): %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var want []string
 	sc := bufio.NewScanner(f)

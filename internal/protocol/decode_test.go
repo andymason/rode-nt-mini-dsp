@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"errors"
 	"math"
 	"testing"
 )
@@ -21,10 +22,10 @@ func TestParseResponse(t *testing.T) {
 		t.Errorf("data = % 02x, want de ad be ef", data)
 	}
 
-	if _, _, err := ParseResponse([]byte{0x03, 0x02}); err != ErrShortResponse {
+	if _, _, err := ParseResponse([]byte{0x03, 0x02}); !errors.Is(err, ErrShortResponse) {
 		t.Errorf("short reply error = %v, want ErrShortResponse", err)
 	}
-	if _, _, err := ParseResponse([]byte{0x03, 0x02, 0x00, 0x00}); err != ErrNotAcknowledged {
+	if _, _, err := ParseResponse([]byte{0x03, 0x02, 0x00, 0x00}); !errors.Is(err, ErrNotAcknowledged) {
 		t.Errorf("unacked reply error = %v, want ErrNotAcknowledged", err)
 	}
 }

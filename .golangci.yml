@@ -1,0 +1,70 @@
+version: "2"
+
+# A curated set rather than everything golangci-lint has. The rule for
+# including a linter is that it catches a real defect or a genuinely outdated
+# construct. Linters that only enforce a house style — where declarations sit in
+# a file, whether tests live in a _test package, how deeply an if may nest — are
+# left off: they would churn working code without making it more correct.
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose # an unclosed response body leaks a connection
+    - copyloopvar # loop variable copies left over from before Go 1.22
+    - errorlint # comparisons that break on wrapped errors
+    - gocritic # a broad set of real bug and performance checks
+    - gosec # file permissions, command construction, integer conversions
+    - intrange # for i := 0; i < n; i++  ->  for i := range n
+    - misspell
+    - nilerr # returning nil after checking that an error is not nil
+    - perfsprint # fmt.Sprintf where a cheaper conversion exists
+    - revive # naming, unused parameters, missing doc comments
+    - unconvert # conversions that do nothing
+    - usestdlibvars # magic strings that the standard library already names
+
+  settings:
+    errcheck:
+      # Writing to stdout or stderr is reported by errcheck on every call, and
+      # nothing useful can be done about a failure to print. Everything else is
+      # handled at the call site.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    gosec:
+      # gosec assumes a program exposed to untrusted input. This one is a
+      # command line tool that talks to a USB device on the machine running it,
+      # so four of its rules only ever fire on things that are working as
+      # intended. The rest are kept.
+      excludes:
+        - G204 # subprocess from a variable: sudo, systemctl, udevadm and the
+          # browser opener. Arguments are passed as separate words, never
+          # through a shell, and none of them come from outside the machine.
+        - G301 # directory 0755: the settings folder is meant to be readable
+        - G302 # file 0644: so is the settings file, and udev and systemd
+          # require their files to be world readable
+        - G304 # file from a variable: reading the path the user named with
+          # --config is the feature, not a traversal
+    revive:
+      rules:
+        - name: unused-parameter
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: increment-decrement
+        - name: var-declaration
+        - name: redefines-builtin-id
+
+  exclusions:
+    generated: lax
+    rules:
+      # Tests read fixtures from paths they build themselves, and a file mode
+      # inside t.TempDir() is not a security boundary.
+      - path: _test\.go
+        linters:
+          - gosec
+
+# Report everything. The defaults stop at three findings per linter, which hides
+# the tail of a class of issue behind the first few.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

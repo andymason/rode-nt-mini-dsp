@@ -78,7 +78,9 @@ func q31(v float32) uint32 {
 		}
 		return 0x80000000
 	}
-	return uint32(n)
+	// The device is sent the raw 32-bit pattern, so this reinterprets the
+	// bits rather than converting a magnitude.
+	return uint32(n) //nolint:gosec // deliberate bit reinterpretation
 }
 
 // u32le packs a coefficient into the 4-byte little-endian payload the device

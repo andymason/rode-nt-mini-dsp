@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -59,7 +60,7 @@ func guiCommand(args []string) error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
 	}()
@@ -76,7 +77,7 @@ func guiCommand(args []string) error {
 		return fmt.Errorf("server error: %w", err)
 	case <-interrupt:
 		log.Println("Stopping.")
-		ln.Close()
+		_ = ln.Close()
 	}
 
 	return nil

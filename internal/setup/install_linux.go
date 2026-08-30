@@ -1,7 +1,9 @@
 package setup
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,27 +101,14 @@ func Remove(o Options) error {
 	return nil
 }
 
-// selfPath is the program that is running, which is what gets installed. A
-// symlink is followed so that copying reaches the real file.
-func selfPath() (string, error) {
-	self, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("cannot find this program on disk: %w", err)
-	}
-	if resolved, err := filepath.EvalSymlinks(self); err == nil {
-		return resolved, nil
-	}
-	return self, nil
-}
-
 // checkTools makes sure the two system commands this needs are present, before
 // asking for a password.
 func checkTools(boot bool) error {
 	if !have("udevadm") {
-		return fmt.Errorf("this computer has no udevadm, which setup needs to give you access to the microphone")
+		return errors.New("this computer has no udevadm, which setup needs to give you access to the microphone")
 	}
 	if boot && !have("systemctl") {
-		return fmt.Errorf("this computer does not use systemd, so settings cannot be sent at startup.\n" +
+		return errors.New("this computer does not use systemd, so settings cannot be sent at startup.\n" +
 			"  Run \"setup --no-boot\" to install the rest, then \"rode-dsp load\" when you want your settings")
 	}
 	return nil
@@ -135,7 +124,7 @@ func have(cmd string) bool {
 func elevate(o Options) error {
 	sudo, err := exec.LookPath("sudo")
 	if err != nil {
-		return fmt.Errorf("setup needs administrator rights. Run it again as root")
+		return errors.New("setup needs administrator rights. Run it again as root")
 	}
 	self, err := selfPath()
 	if err != nil {
@@ -151,18 +140,23 @@ func elevate(o Options) error {
 	return nil
 }
 
-// installProgram copies the running program to its permanent home. Writing to
-// a temporary file and renaming keeps the copy atomic, and is also what allows
-// a running program to overwrite itself.
+// installProgram copies the running program to its permanent home. The copy is
+// streamed rather than read into memory: the program is several megabytes, and
+// there is no reason to hold two copies of it.
 func installProgram(self, dest string) error {
 	if same(self, dest) {
 		return nil
 	}
-	data, err := os.ReadFile(self)
+	src, err := os.Open(self)
 	if err != nil {
 		return fmt.Errorf("cannot read this program: %w", err)
 	}
-	return writeFile(file{path: dest, mode: 0o755, content: string(data)})
+	defer func() { _ = src.Close() }()
+
+	return writeAtomic(dest, 0o755, func(w io.Writer) error {
+		_, err := io.Copy(w, src)
+		return err
+	})
 }
 
 func same(a, b string) bool {
@@ -177,9 +171,20 @@ func same(a, b string) bool {
 	return os.SameFile(fa, fb)
 }
 
-// writeFile puts one file in place atomically.
+// writeFile puts one planned file in place.
 func writeFile(f file) error {
-	dir := filepath.Dir(f.path)
+	return writeAtomic(f.path, f.mode, func(w io.Writer) error {
+		_, err := io.WriteString(w, f.content)
+		return err
+	})
+}
+
+// writeAtomic writes to a temporary file in the destination directory and
+// renames it into place, so a reader never sees a half-written file. Renaming
+// is also what lets a running program overwrite itself: the old file stays
+// valid for anything still holding it open.
+func writeAtomic(path string, mode os.FileMode, write func(io.Writer) error) error {
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("cannot create %s: %w", dir, err)
 	}
@@ -188,20 +193,27 @@ func writeFile(f file) error {
 	if err != nil {
 		return fmt.Errorf("cannot write to %s: %w", dir, err)
 	}
-	defer os.Remove(tmp.Name())
+	// A no-op once the rename below succeeds.
+	defer func() { _ = os.Remove(tmp.Name()) }()
 
-	if _, err := tmp.WriteString(f.content); err != nil {
-		tmp.Close()
-		return err
+	if err := write(tmp); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("cannot write %s: %w", path, err)
+	}
+	// Flush before renaming, so a crash cannot leave the new name pointing at
+	// contents that never reached the disk.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("cannot flush %s: %w", path, err)
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), f.mode); err != nil {
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp.Name(), f.path); err != nil {
-		return fmt.Errorf("cannot put %s in place: %w", f.path, err)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("cannot put %s in place: %w", path, err)
 	}
 	return nil
 }

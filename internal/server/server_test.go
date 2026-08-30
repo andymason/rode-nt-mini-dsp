@@ -25,8 +25,8 @@ func start(t *testing.T) (*websocket.Conn, string) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
-	go srv.Serve(ln)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() { _ = srv.Serve(ln) }()
 
 	addr := ln.Addr().String()
 	conn, resp, err := websocket.DefaultDialer.Dial("ws://"+addr+"/ws", http.Header{
@@ -35,8 +35,8 @@ func start(t *testing.T) (*websocket.Conn, string) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	resp.Body.Close()
-	t.Cleanup(func() { conn.Close() })
+	_ = resp.Body.Close()
+	t.Cleanup(func() { _ = conn.Close() })
 
 	return conn, configPath
 }

@@ -2,6 +2,7 @@ package dsp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -196,10 +197,10 @@ func isBuiltinName(name string) bool {
 func SaveUserPreset(path, name, description string, s *DSPState) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return fmt.Errorf("preset name cannot be empty")
+		return errors.New("preset name cannot be empty")
 	}
 	if len(name) > 64 {
-		return fmt.Errorf("preset name is too long (max 64 characters)")
+		return errors.New("preset name is too long (max 64 characters)")
 	}
 	if isBuiltinName(name) {
 		return fmt.Errorf("%q is a built-in preset; choose another name", name)

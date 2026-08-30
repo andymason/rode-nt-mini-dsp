@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 
@@ -46,10 +47,10 @@ func probeEffectsCommand(args []string) error {
 		return err
 	}
 	if *maxID > 0xFF {
-		return fmt.Errorf("max-id must be <= 0xff")
+		return errors.New("max-id must be <= 0xff")
 	}
 	if *maxParam > 0xFF {
-		return fmt.Errorf("max-param must be <= 0xff")
+		return errors.New("max-param must be <= 0xff")
 	}
 
 	ctx := NewContext()
