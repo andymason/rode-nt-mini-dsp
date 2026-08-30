@@ -86,6 +86,10 @@ func TestPlaceholdersAreNotInComments(t *testing.T) {
 }
 
 // Without the startup service there is one file to write, with it three.
+//
+// The expected paths are joined rather than written out, so that the separator
+// is whatever the running platform uses. plan builds its paths the same way,
+// and this test runs on every platform the build matrix covers.
 func TestPlanContents(t *testing.T) {
 	o := Options{
 		BinDir:  "/usr/local/bin",
@@ -101,8 +105,8 @@ func TestPlanContents(t *testing.T) {
 	if len(noBoot) != 1 {
 		t.Fatalf("without the startup service, got %d files, want 1", len(noBoot))
 	}
-	if noBoot[0].path != "/etc/udev/rules.d/"+accessRule {
-		t.Errorf("got %q", noBoot[0].path)
+	if got, want := noBoot[0].path, filepath.Join(o.UdevDir, accessRule); got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 
 	o.Boot = true
@@ -111,9 +115,9 @@ func TestPlanContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"/etc/udev/rules.d/" + accessRule,
-		"/etc/systemd/system/" + unitName,
-		"/etc/udev/rules.d/" + serviceRule,
+		filepath.Join(o.UdevDir, accessRule),
+		filepath.Join(o.UnitDir, unitName),
+		filepath.Join(o.UdevDir, serviceRule),
 	}
 	if len(boot) != len(want) {
 		t.Fatalf("got %d files, want %d", len(boot), len(want))
