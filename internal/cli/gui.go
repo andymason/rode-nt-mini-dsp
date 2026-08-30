@@ -120,5 +120,5 @@ func openURL(url string) {
 }
 
 func init() {
-	RegisterCommand("gui", "Start the web GUI on localhost", guiCommand)
+	RegisterCommand("gui", "Open the settings page in your browser", guiCommand)
 }

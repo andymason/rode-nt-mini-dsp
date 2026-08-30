@@ -1,0 +1,91 @@
+name: Release
+
+# Publishes ready-to-run programs, so nobody has to install Go to use this.
+#
+# cgo (hidapi is C) rules out cross-compiling, so every target builds on its own
+# runner. Linux builds on the oldest runner available: the C library a program
+# is built against sets the oldest system it will run on, and nothing here needs
+# anything newer.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and publish"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset: rode-dsp-linux-amd64
+          - os: ubuntu-22.04-arm
+            asset: rode-dsp-linux-arm64
+          - os: macos-13
+            asset: rode-dsp-macos-amd64
+          - os: macos-14
+            asset: rode-dsp-macos-arm64
+          - os: windows-latest
+            asset: rode-dsp-windows-amd64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      # hidapi needs libudev to build on Linux. Only libudev.so.1 is needed to
+      # run, and every systemd distribution already has it — which is what keeps
+      # this off the list of things a user has to install.
+      - name: Install libudev
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - name: Build
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          go build -trimpath -ldflags "-s -w -X main.versionTag=${tag}" -o "${{ matrix.asset }}" .
+
+      - name: Check it runs
+        shell: bash
+        run: ./${{ matrix.asset }} --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # One checksum file for all of them, so a download can be verified.
+      - name: Checksums
+        run: cd dist && sha256sum * > checksums.txt && cat checksums.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag

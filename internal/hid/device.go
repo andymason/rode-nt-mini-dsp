@@ -102,8 +102,8 @@ func permissionHint() string {
 	if runtime.GOOS != "linux" {
 		return ""
 	}
-	return "\n  This is usually a permissions problem. Install the udev rule with:\n" +
-		"    sudo ./packaging/linux/install.sh\n" +
+	return "\n  This usually means setup has not run yet. Run:\n" +
+		"    sudo rode-dsp setup\n" +
 		"  then unplug the microphone and plug it back in."
 }
 

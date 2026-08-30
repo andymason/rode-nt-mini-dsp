@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"sort"
 
 	"rode-dsp/internal/dsp"
@@ -71,16 +72,35 @@ func noExtraArgs(fs *flag.FlagSet) error {
 	return fmt.Errorf("unexpected argument(s): %v", extra)
 }
 
-// BriefStatus prints a short connection status without config details
+// BriefStatus prints a short connection status without config details.
+//
+// This is what someone sees when they run a freshly downloaded program with no
+// arguments, so it is also where the first instruction belongs.
 func BriefStatus() {
-	fmt.Fprintf(os.Stderr, "RODE NT-USB Mini DSP Controller\n\n")
+	fmt.Fprintf(os.Stderr, "RODE NT-USB Mini sound settings\n\n")
 	ctx := NewContext()
 	defer ctx.Close()
 	if err := ctx.EnsureDeviceConnected(); err != nil {
-		fmt.Fprintf(os.Stderr, "Connection: DISCONNECTED (%v)\n\n", err)
+		fmt.Fprintf(os.Stderr, "Microphone: not found (%v)\n\n", err)
 	} else {
-		fmt.Fprintf(os.Stderr, "Connection: CONNECTED\n\n")
+		fmt.Fprintf(os.Stderr, "Microphone: connected\n\n")
 	}
+	if hint := setupHint(); hint != "" {
+		fmt.Fprintf(os.Stderr, "%s\n\n", hint)
+	}
+}
+
+// setupHint tells a first-time user what to do, and says nothing once setup has
+// run. The access rule is the marker because it is the file that has to exist
+// before the microphone can be reached without sudo.
+func setupHint() string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	if _, err := os.Stat("/etc/udev/rules.d/70-rode-nt-usb-mini.rules"); err == nil {
+		return ""
+	}
+	return "Not set up yet. Run:\n  sudo " + os.Args[0] + " setup"
 }
 
 // Usage prints the CLI usage information.
@@ -90,21 +110,24 @@ func Usage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s <command> [options]\n\n", prog)
 
 	listCommands("Commands:", false)
-	listCommands("Advanced (protocol work; you will not need these):", true)
+	listCommands("Advanced (for working on the protocol; you will not need these):", true)
 
-	fmt.Fprintf(os.Stderr, `Examples:
+	fmt.Fprintf(os.Stderr, `Getting started:
+  sudo %[1]s setup    set this up once
+  %[1]s gui           choose how you want to sound
+
+Examples:
   %[1]s status                          what the microphone is set to now
-  %[1]s gui                             open the web interface
   %[1]s comp --enable --threshold -20   turn the compressor on
-  %[1]s load                            re-apply your saved settings
+  %[1]s load                            send your saved settings again
 
-Settings are saved automatically. On Linux, "sudo ./packaging/linux/install.sh
---boot" re-applies them every time the microphone is plugged in.
+Your settings are saved as you make them. After setup they go to the
+microphone every time you start the computer or plug the microphone in.
 
 Environment:
-  %[2]s   config file to use (overridden by --config)
+  %[2]s   the settings file to use (--config wins)
 
-Run "%[1]s <command> -help" for a command's own options.
+Run "%[1]s <command> -help" for that command's own options.
 `, prog, dsp.ConfigEnvVar)
 }
 
