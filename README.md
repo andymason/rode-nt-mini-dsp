@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/andymason/rode-dsp/actions/workflows/ci.yml/badge.svg)](https://github.com/andymason/rode-dsp/actions/workflows/ci.yml)
 
-Controls the RØDE NT-USB Mini's built-in sound processing, on Linux.
+Controls the RØDE NT-USB Mini's built-in sound processing, on Linux and Windows.
 
 ## Description
 
@@ -15,17 +15,22 @@ whenever it is unplugged or the computer is shut down. rode-dsp saves the chosen
 settings and sends them back whenever the microphone is detected: at startup, on
 connection, and after resume.
 
-RØDE Connect controls the same processors, but runs only on Windows and macOS.
+RØDE's own application, [RØDE
+Connect](https://rode.com/en/software/rode-connect), controls the same
+processors but runs only on Windows and macOS. rode-dsp brings them to Linux,
+and on Windows it is a lightweight alternative that needs no installation.
+
+The tool was developed on Windows, where the USB captures, debugging and
+testing were done, and then refined for Linux.
 
 ## Requirements
 
 - A RØDE NT-USB Mini.
-- Linux, with systemd for the startup service.
-
-On Windows and macOS, use [RØDE
-Connect](https://rode.com/en/software/rode-connect) instead.
+- Linux, with systemd for the startup service, or 64-bit Windows.
 
 ## Installation
+
+### Linux
 
 Download `rode-dsp-linux-amd64` from the [latest
 release](https://github.com/andymason/rode-dsp/releases/latest), or
@@ -43,6 +48,21 @@ browser; settings apply as they are changed, and are saved automatically.
 
 To remove: `sudo rode-dsp setup --remove`. Saved settings are kept; delete
 `~/.config/rode-dsp` to remove those too.
+
+### Windows
+
+Download `rode-dsp-windows-amd64.exe` from the [latest
+release](https://github.com/andymason/rode-dsp/releases/latest). Then, in a
+terminal in the download folder:
+
+```
+.\rode-dsp-windows-amd64.exe gui
+```
+
+Nothing needs installing: Windows can reach the microphone without any setup.
+There is no startup service either, so after the microphone loses power, run
+`rode-dsp load` to send the saved settings again. To remove, delete the program
+and `%AppData%\rode-dsp`.
 
 ## Processors
 
@@ -154,7 +174,9 @@ go test ./...
 
 cgo is required, because the USB library is C: a C toolchain must be present and
 `CGO_ENABLED` must not be `0`. Cross-compiling therefore needs a cross
-toolchain. Linux also needs the libudev headers:
+toolchain. On Windows, install a MinGW-w64 GCC (for example from
+[MSYS2](https://www.msys2.org/)) and put it on `PATH`. Linux also needs the
+libudev headers:
 
 | Distribution | Package |
 |---|---|

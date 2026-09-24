@@ -6,6 +6,10 @@ directory records how the protocol was recovered so that `rode-dsp` could drive
 the microphone from Linux. The work was done with LLM coding agents connected to
 reverse-engineering tools over MCP.
 
+All of the capture, debugging and testing was done on Windows, where RØDE
+Connect runs, so that its behaviour could be observed directly. The Linux
+version was refined once the Windows one worked.
+
 Nothing from RØDE Connect is in this repository: no binary, and no decompiled or
 disassembled code. What is here is the method, the protocol facts it produced,
 and the scripts written along the way. The purpose throughout was
