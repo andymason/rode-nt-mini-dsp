@@ -26,7 +26,7 @@ const (
 // CmdGet was previously documented here as "INIT/CLEAR" on the theory that the
 // burst of all-zero 0x03 packets RØDE Connect sends at startup was zeroing the
 // DSP. It is not: those are reads, and the device answers each with the current
-// coefficient. See docs/re/02-protocol.md.
+// coefficient. See docs/re/protocol.md.
 const (
 	CmdSetAll = 0x00 // bulk write, every parameter of an effect in one packet
 	CmdGetAll = 0x01 // bulk read, every parameter of an effect in one reply
@@ -40,7 +40,7 @@ const (
 //
 // Note Aural Exciter's 4 covers param 0x03, which no UI exposes and which the
 // SET encoder never writes. Big Bottom reads 3, but the device does answer a
-// read of BB param 0x03 — see Q6 in docs/re/04-open-questions.md.
+// read of BB param 0x03 — see Q6 in docs/re/open-questions.md.
 var ParamCounts = map[byte]int{
 	EffComp: 6,
 	EffGate: 7,

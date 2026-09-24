@@ -246,3 +246,11 @@ $RECYCLE.BIN/
 # The tool itself, built by "go build".
 /rode-dsp
 /rode-dsp.exe
+
+# Third-party executables and installers. Never commit these: RØDE Connect and
+# similar are proprietary, and are analysed from a local copy only.
+*.exe
+*.msi
+*.dmg
+*.gzf
+*.rep/

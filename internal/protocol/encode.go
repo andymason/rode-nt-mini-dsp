@@ -8,8 +8,8 @@ import (
 // Encoders transcribed from RØDE Connect.exe (SHA-256 c3015816…1023c).
 //
 // The formulas are read off the instruction stream, not fitted to captures; see
-// docs/re/03-encoders.md for the decompilation and docs/re/01-addresses.md for
-// the addresses. Three properties of the original are reproduced deliberately:
+// docs/re/encoders.md for the formulas and docs/re/README.md for how they
+// were recovered. Three properties of the original are reproduced deliberately:
 //
 //   - Indices truncate (CVTTSS2SI), they do not round.
 //   - The final scaling happens in float32 (MULSS), so it is done here in
@@ -119,7 +119,7 @@ func CompReleaseIndex(ms float64) int {
 }
 
 // CompGainIndex maps 0.0..9.0 dB onto the table index. The 9.0 is 0x142279fc0
-// in the binary; see Q3 in docs/re/04-open-questions.md.
+// in the binary; see Q3 in docs/re/open-questions.md.
 func CompGainIndex(db float64) int {
 	return lutIndex(float32(clamp(db, 0.0, 9.0) / 9.0 * 255.0))
 }

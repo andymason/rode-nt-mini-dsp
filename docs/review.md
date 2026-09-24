@@ -112,7 +112,7 @@ These came up and were rejected as more machinery than the problem deserves:
 - **Graceful HTTP shutdown.** Ctrl-C on a local GUI. The listener closes and the
   process exits.
 - **Firmware 2.1.2 and older** still need the Q16 scale factor and still are not
-  supported. Q9 in `04-open-questions.md` has the detail; it needs a device on
+  supported. Q9 in `docs/re/open-questions.md` has the detail; it needs a device on
   that firmware to verify against, which nobody has.
 
 ## One change worth knowing about

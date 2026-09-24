@@ -143,7 +143,7 @@ there is nothing to send.
 
 **Firmware 2.1.2 or older.** These need a different scale factor, which is not
 implemented. Update with RØDE Central, or see Q9 in
-`docs/re/04-open-questions.md`.
+`docs/re/open-questions.md`.
 
 ## Building from source
 
@@ -168,20 +168,19 @@ correctness-critical tests run anywhere.
 
 ## Protocol notes
 
-RØDE publish no specification, so the protocol was recovered by reading their
-application. The encodings were taken from RØDE Connect's instruction stream
-rather than inferred from recordings. The microphone's seven lookup tables were
-extracted from the binary. What is sent here is therefore what the official
-application sends, and `internal/protocol/capture_oracle_test.go` pins that
-against real USB captures.
+RØDE publish no specification, so the protocol was reverse engineered, for
+interoperability, from USB captures of RØDE Connect and static analysis of the
+application in Ghidra, with LLM agents driving Ghidra over MCP.
+[`docs/re/`](docs/re/README.md) describes the tools and method, the wire
+protocol, the encoder and decoder formulas, and the open questions.
+`internal/protocol/capture_oracle_test.go` tests the encoders against the USB
+captures.
 
 Two limits apply. Values quantise to the device's 256 steps, so a value read
 back can differ from the one written by up to one step. Some arithmetic runs at
-a different precision here than in the original, differing by about one part in
+a different precision here than in RØDE Connect, differing by about one part in
 2.4 million.
 
-`docs/re/` documents the tooling, the wire protocol, the encoder and decoder
-formulas, the lookup-table extraction and the open questions.
 `tools/frida/` holds the instrumentation scripts. Three commands exist for that
 work rather than daily use:
 
@@ -193,4 +192,14 @@ rode-dsp send-raw --i-know-what-this-does <hex>
 
 There is no equaliser, high-pass filter or de-esser on this microphone. RØDE
 Connect contains panels for all three and hides them; the firmware has no
-matching DSP blocks. Q5 in `docs/re/04-open-questions.md` has the evidence.
+matching DSP blocks. Q5 in `docs/re/open-questions.md` has the evidence.
+
+## Licence and trademarks
+
+rode-dsp is released under the [MIT licence](LICENSE).
+
+It is an independent, non-commercial project, and is not affiliated with,
+endorsed by or supported by RØDE Microphones. RØDE, NT-USB Mini and RØDE
+Connect are trademarks of their owner and are used here only to identify the
+hardware and software this tool works with. No RØDE software, firmware or
+source code is included in this repository.

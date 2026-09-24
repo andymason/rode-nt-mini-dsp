@@ -8,13 +8,12 @@ import (
 	"strings"
 )
 
-// The seven DSP lookup tables, extracted from RØDE Connect.exe
-// (SHA-256 c3015816…1023c) and committed under luts/. Each is a contiguous
-// 256-entry block of little-endian uint32 in .rdata; see docs/re/06-static-extraction.md
-// for how they were located and docs/re/03-encoders.md for how they are indexed.
+// The seven DSP lookup tables, committed under luts/. Each is 256 entries of
+// uint32, one per line in hex. docs/re/README.md describes how they were
+// recovered and docs/re/encoders.md how they are indexed.
 //
 // These replaced an earlier set reconstructed from USB captures, which covered
-// only 40-91 of the 256 entries and interpolated between them. The binary does
+// only 40-91 of the 256 entries and interpolated between them. RØDE Connect does
 // no interpolation at all: it truncates a scaled float to an index and reads one
 // entry.
 //
@@ -25,24 +24,24 @@ const lutEntries = 256
 
 var (
 	// CompThresholdTable is indexed by (1 - (dB+60)/60) * 255, so it runs
-	// backwards relative to the dB value. VA 0x1407385b0.
+	// backwards relative to the dB value.
 	CompThresholdTable = mustLoadTable("comp_threshold")
 
-	// CompAttackTable is indexed by log(ms/0.1)/log(100) * 255. VA 0x1407379b0.
+	// CompAttackTable is indexed by log(ms/0.1)/log(100) * 255.
 	CompAttackTable = mustLoadTable("comp_attack")
 
-	// CompReleaseTable is indexed by log(ms/5)/log(40) * 255. VA 0x1407389b0.
+	// CompReleaseTable is indexed by log(ms/5)/log(40) * 255.
 	CompReleaseTable = mustLoadTable("comp_release")
 
-	// CompGainTable is indexed by (dB/9) * 255. VA 0x1407381b0.
+	// CompGainTable is indexed by (dB/9) * 255.
 	CompGainTable = mustLoadTable("comp_gain")
 
 	// HarmonicsDriveTable is shared by Aural Exciter harmonics and Big Bottom
-	// drive, both indexed directly by percentage. VA 0x1407391b0.
+	// drive, both indexed directly by percentage.
 	HarmonicsDriveTable = mustLoadTable("harmonics_drive")
 
 	// AETune1Table and AETune2Table are both indexed by the same Aural Exciter
-	// tune index. VA 0x140737db0 and 0x140738db0.
+	// tune index.
 	AETune1Table = mustLoadTable("ae_tune_1")
 	AETune2Table = mustLoadTable("ae_tune_2")
 )
@@ -57,7 +56,7 @@ func mustLoadTable(name string) *[lutEntries]uint32 {
 	return t
 }
 
-// loadTable reads one .hex file: a '#'-commented provenance header followed by
+// loadTable reads one .hex file: a '#'-commented header followed by
 // exactly lutEntries lines of 8-digit hex, one uint32 each, in table order.
 func loadTable(name string) (*[lutEntries]uint32, error) {
 	f, err := lutFS.Open("luts/" + name + ".hex")

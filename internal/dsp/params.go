@@ -10,7 +10,7 @@ import (
 // The last four fields exist for the GUI's advanced mode: they describe how a
 // UI value becomes wire bytes, so the interface can explain the encoding
 // rather than restate it. IndexFn is the same function the encoder calls, so
-// the two cannot drift apart. See docs/re/03-encoders.md.
+// the two cannot drift apart. See docs/re/encoders.md.
 type ParamDef struct {
 	EffectID   byte
 	ParamID    byte

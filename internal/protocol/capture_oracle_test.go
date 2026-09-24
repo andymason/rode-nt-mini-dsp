@@ -11,7 +11,7 @@ import (
 //
 // It was written before the encoders were known exactly, to survive the LUT
 // replacement. That replacement has now happened, along with the transcription
-// of the real formulas out of RØDE Connect.exe (docs/re/03-encoders.md), and the
+// of the real formulas out of RØDE Connect.exe (docs/re/encoders.md), and the
 // outcome reorganised this file:
 //
 //   - Every capture taken at the TOP of a slider is reproduced exactly, as are
@@ -22,7 +22,7 @@ import (
 //     TestCaptureLabelsAreApproximate, which asserts the implied input, because
 //     asserting the label would be asserting a measurement error.
 //
-// See docs/re/02-protocol.md for the capture methodology.
+// See docs/re/protocol.md for the capture methodology.
 
 func le32(b []byte) uint32 { return binary.LittleEndian.Uint32(b[:4]) }
 
@@ -118,7 +118,7 @@ func TestTruncationMatchesCapturedIndices(t *testing.T) {
 //
 // Closing this properly needs a fresh capture with each slider deliberately
 // parked at its minimum, which needs the microphone. See the closing note in
-// docs/re/04-open-questions.md.
+// docs/re/open-questions.md.
 func TestCaptureLabelsAreApproximate(t *testing.T) {
 	// Tolerances differ by how tightly the implied input is pinned:
 	//
@@ -162,7 +162,7 @@ func TestCaptureLabelsAreApproximate(t *testing.T) {
 		}
 		if le32(c.fn(c.labelled)) == c.captured {
 			t.Errorf("%s(%v) now reproduces the capture at its labelled value; "+
-				"move it into capturedVectors() and update docs/re/03-encoders.md",
+				"move it into capturedVectors() and update docs/re/encoders.md",
 				c.name, c.labelled)
 		}
 	}

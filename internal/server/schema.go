@@ -104,7 +104,7 @@ func BuildSchema() Schema {
 			ReportID:   "0x04",
 			PacketSize: protocol.PacketSize,
 			Scale:      "Q31, saturating (firmware above 2.1.2)",
-			Source:     "RODE Connect.exe c3015816…1023c — docs/re/03-encoders.md",
+			Source:     "docs/re/encoders.md",
 		},
 		Effects: effects,
 	}
