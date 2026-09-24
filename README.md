@@ -2,18 +2,16 @@
 
 [![CI](https://github.com/andymason/rode-nt-mini-dsp/actions/workflows/ci.yml/badge.svg)](https://github.com/andymason/rode-nt-mini-dsp/actions/workflows/ci.yml)
 
-Controls the RØDE NT-USB Mini's built-in sound processing, on Linux and Windows.
+Controls the Rode NT-USB Mini's built-in sound processing, on Linux and Windows.
 A real-time web UI controls and configures the DSP filters, with live
 visualisations of what every effect is doing.
 
 ![The rode-dsp web UI, showing the compressor, noise gate, aural exciter and big bottom panels](docs/images/web-ui.png)
 
-![The compressor panel reacting to speech: input and output waveforms, gain reduction over time, and the transfer curve](docs/images/compressor.png)
-
 ## Description
 
-The NT-USB Mini processes sound inside the microphone, before it reaches the
-computer. Four processors are available: a compressor, a noise gate, an aural
+The Rode NT-USB Mini processes sound inside the microphone, before it reaches
+the computer. Four processors are available: a compressor, a noise gate, an aural
 exciter and a big bottom.
 
 The microphone holds these settings only while it has power. They are lost
@@ -31,7 +29,7 @@ testing were done, and then refined for Linux.
 
 ## Requirements
 
-- A RØDE NT-USB Mini.
+- A Rode NT-USB Mini.
 - Linux, with systemd for the startup service, or 64-bit Windows.
 
 ## Installation
