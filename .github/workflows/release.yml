@@ -28,7 +28,7 @@ jobs:
             asset: rode-dsp-linux-amd64
           - os: ubuntu-22.04-arm
             asset: rode-dsp-linux-arm64
-          - os: macos-13
+          - os: macos-15-intel
             asset: rode-dsp-macos-amd64
           - os: macos-14
             asset: rode-dsp-macos-arm64
