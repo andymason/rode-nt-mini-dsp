@@ -16,7 +16,7 @@ import (
 // RØDE Connect contains seven DSP panels — the four this tool drives plus an
 // Equalizer, High Pass Filter and De-Esser it hides for the NT-USB Mini. This
 // command answered that question for the NT-USB Mini in August 2026: effect IDs
-// 0x04 and up hold nothing. Q5 in docs/re/open-questions.md records the
+// 0x04 and up hold nothing. docs/protocol.md records the
 // result; the command stays because it is the test to re-run on other RØDE
 // hardware, or after a firmware update.
 //
@@ -164,7 +164,6 @@ func probeEffectsCommand(args []string) error {
 		}
 		fmt.Println()
 		fmt.Println("The firmware implements DSP blocks this tool does not drive.")
-		fmt.Println("Record these in docs/re/open-questions.md.")
 	} else {
 		fmt.Println("\nNo unregistered effect ID holds data.")
 		if !*writeProbe {

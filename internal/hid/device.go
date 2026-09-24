@@ -254,7 +254,7 @@ var effectOrder = []byte{protocol.EffComp, protocol.EffGate, protocol.EffAE, pro
 
 // ReadState asks the device for every parameter of every effect and returns
 // what it actually holds — which is the truth whenever anything else has driven
-// the microphone since this tool last wrote to it. See docs/re/protocol.md.
+// the microphone since this tool last wrote to it. See docs/protocol.md.
 func (d *Device) ReadState() (*dsp.DSPState, error) {
 	state := dsp.NewDSPState()
 
@@ -278,7 +278,7 @@ func (d *Device) ReadState() (*dsp.DSPState, error) {
 			if !ok {
 				// Aural Exciter param 0x03 has no UI meaning and no decoder; it
 				// is read because RODE Connect reads it, not because the value
-				// is understood. See Q6 in docs/re/open-questions.md.
+				// is understood. See docs/protocol.md.
 				continue
 			}
 			if err := state.SetParam(effID, pid, value); err != nil {

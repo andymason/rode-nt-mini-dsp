@@ -95,7 +95,7 @@ func TestEncodersAreTotal(t *testing.T) {
 //
 // The dB-domain noise gate parameters are deliberately excluded: they are
 // formula-based and extrapolate smoothly, and whether RØDE Connect clamps them
-// at the UI bounds is still open (see docs/re/open-questions.md).
+// at the UI bounds is unknown.
 func TestIndexedEncodersClampOutOfRange(t *testing.T) {
 	indexed := map[byte]map[byte]bool{
 		protocol.EffComp: {0x02: true},             // Ratio
@@ -155,7 +155,7 @@ func TestLogScaledEncodersSurviveNonPositiveInput(t *testing.T) {
 // The only surplus is Aural Exciter, whose count of 4 covers params 0x00-0x03
 // while the UI exposes only 0x01-0x02. Param 0x03 is read at startup but never
 // SET, and the device answers a read of Big Bottom's param 0x03 too even though
-// RØDE Connect does not ask. See Q6 in docs/re/open-questions.md.
+// RØDE Connect does not ask. See docs/protocol.md.
 func TestParamCountsCoverRegistry(t *testing.T) {
 	hidden := map[byte]int{
 		protocol.EffAE: 1, // param 0x03, read-only

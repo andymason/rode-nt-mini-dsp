@@ -162,7 +162,7 @@ const hexPairs = (h) => (h ? h.replace(/(..)/g, "$1 ").trim() : "");
  * shape chosen to look plausible: the gate's one-pole attack coefficient, its
  * hold and release ramps and its hysteresis offset are the same expressions the
  * encoder transmits, so the plotted curve moves for the reasons the device's
- * own gate would. See docs/re/encoders.md.
+ * own gate would. See docs/protocol.md.
  */
 
 const FS = 48000; // the device runs at 48 kHz; every time constant is in samples
@@ -409,7 +409,7 @@ function simulateComp(p, cols, live) {
 // Aural Exciter and Big Bottom are the honest exception in this file. Their
 // corner frequency is exact — it is the number the packet carries — but the
 // device's filter topology is not recovered: ae_tune_1 and ae_tune_2 are two
-// Q31 coefficients whose meaning docs/re/encoders.md does not settle, and
+// Q31 coefficients whose meaning docs/protocol.md does not settle, and
 // Big Bottom's tune sends a bare index with no coefficient at all. So the skirt
 // is drawn as a conventional second-order shelf, which is right about which
 // part of the spectrum is touched and where it rolls off, and the caption on

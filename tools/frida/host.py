@@ -113,7 +113,7 @@ class Collector:
             print(f"[host] wrote {path.relative_to(REPO)} ({len(deduped)} distinct values)")
             if effect not in EFFECT_NAMES:
                 print(f"       ^ effect 0x{effect:02x} is not in the registry — "
-                      f"record it in docs/re/protocol.md")
+                      f"record it in docs/protocol.md")
 
 
 def build_agent(names):
