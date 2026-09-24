@@ -1,4 +1,4 @@
-# rode-dsp
+# Rode NT-USB Mini DSP Control
 
 [![CI](https://github.com/andymason/rode-nt-mini-dsp/actions/workflows/ci.yml/badge.svg)](https://github.com/andymason/rode-nt-mini-dsp/actions/workflows/ci.yml)
 
