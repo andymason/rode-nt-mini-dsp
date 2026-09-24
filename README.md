@@ -162,8 +162,8 @@ there is nothing to send.
 **No volume control.** The microphone has none. Use the system sound settings.
 
 **Firmware 2.1.2 or older.** These need a different scale factor, which is not
-implemented. Update with RØDE Central, or see Q9 in
-`docs/re/open-questions.md`.
+implemented. Update with RØDE Central, or see
+[`docs/protocol.md`](docs/protocol.md#firmware-212-and-older).
 
 ## Building from source
 
@@ -193,8 +193,8 @@ correctness-critical tests run anywhere.
 RØDE publish no specification, so the protocol was reverse engineered, for
 interoperability, from USB captures of RØDE Connect and static analysis of the
 application in Ghidra, with LLM agents driving Ghidra over MCP.
-[`docs/re/`](docs/re/README.md) describes the tools and method, the wire
-protocol, the encoder and decoder formulas, and the open questions.
+[`docs/protocol.md`](docs/protocol.md) describes the tools and method, the wire
+protocol, the encoder and decoder formulas, and what remains unknown.
 `internal/protocol/capture_oracle_test.go` tests the encoders against the USB
 captures.
 
@@ -214,7 +214,8 @@ rode-dsp send-raw --i-know-what-this-does <hex>
 
 There is no equaliser, high-pass filter or de-esser on this microphone. RØDE
 Connect contains panels for all three and hides them; the firmware has no
-matching DSP blocks. Q5 in `docs/re/open-questions.md` has the evidence.
+matching DSP blocks. [`docs/protocol.md`](docs/protocol.md#no-equaliser-high-pass-filter-or-de-esser)
+has the evidence.
 
 ## Licence and trademarks
 

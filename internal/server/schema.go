@@ -104,7 +104,7 @@ func BuildSchema() Schema {
 			ReportID:   "0x04",
 			PacketSize: protocol.PacketSize,
 			Scale:      "Q31, saturating (firmware above 2.1.2)",
-			Source:     "docs/re/encoders.md",
+			Source:     "docs/protocol.md",
 		},
 		Effects: effects,
 	}

@@ -23,10 +23,8 @@ const (
 // FUN_140372080 build the SET forms. Which pair a device uses is decided by the
 // firmware check at FUN_140102d40; the NT-USB Mini takes the per-parameter path.
 //
-// CmdGet was previously documented here as "INIT/CLEAR" on the theory that the
-// burst of all-zero 0x03 packets RØDE Connect sends at startup was zeroing the
-// DSP. It is not: those are reads, and the device answers each with the current
-// coefficient. See docs/re/protocol.md.
+// The all-zero 0x03 packets RØDE Connect sends at startup are reads: the device
+// answers each with the current coefficient. See docs/protocol.md.
 const (
 	CmdSetAll = 0x00 // bulk write, every parameter of an effect in one packet
 	CmdGetAll = 0x01 // bulk read, every parameter of an effect in one reply
@@ -40,7 +38,7 @@ const (
 //
 // Note Aural Exciter's 4 covers param 0x03, which no UI exposes and which the
 // SET encoder never writes. Big Bottom reads 3, but the device does answer a
-// read of BB param 0x03 — see Q6 in docs/re/open-questions.md.
+// read of BB param 0x03 — see docs/protocol.md.
 var ParamCounts = map[byte]int{
 	EffComp: 6,
 	EffGate: 7,

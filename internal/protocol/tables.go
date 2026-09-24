@@ -9,8 +9,8 @@ import (
 )
 
 // The seven DSP lookup tables, committed under luts/. Each is 256 entries of
-// uint32, one per line in hex. docs/re/README.md describes how they were
-// recovered and docs/re/encoders.md how they are indexed.
+// uint32, one per line in hex. docs/protocol.md describes how they were
+// recovered and how they are indexed.
 //
 // These replaced an earlier set reconstructed from USB captures, which covered
 // only 40-91 of the 256 entries and interpolated between them. RØDE Connect does
