@@ -36,7 +36,10 @@ jobs:
             asset: rode-dsp-windows-amd64.exe
     runs-on: ${{ matrix.os }}
     steps:
+      # A manual run builds the tag it is given, not the branch it runs from.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
@@ -79,13 +82,19 @@ jobs:
       - name: Checksums
         run: cd dist && sha256sum * > checksums.txt && cat checksums.txt
 
+      # A release created by hand on GitHub gets the binaries added to it;
+      # otherwise one is created.
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          gh release create "$TAG" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$TAG" \
-            --generate-notes \
-            --verify-tag
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --generate-notes \
+              --verify-tag
+          fi
