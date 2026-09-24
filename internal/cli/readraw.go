@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"time"
@@ -23,7 +24,7 @@ func readrawCommand(args []string) error {
 
 	// Validate flags
 	if *count < 0 {
-		return fmt.Errorf("count must be >= 0")
+		return errors.New("count must be >= 0")
 	}
 
 	ctx := std.context()

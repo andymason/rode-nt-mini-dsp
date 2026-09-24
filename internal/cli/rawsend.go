@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -35,11 +36,11 @@ func sendRawCommand(args []string) error {
 
 	rest := fs.Args()
 	if len(rest) == 0 {
-		return fmt.Errorf("usage: rode-dsp send-raw --i-know-what-this-does <hex bytes>\n" +
+		return errors.New("usage: rode-dsp send-raw --i-know-what-this-does <hex bytes>\n" +
 			"  e.g. send-raw --i-know-what-this-does 04 00 02 01 00 00 8f 25")
 	}
 	if !*confirm {
-		return fmt.Errorf("refusing to send unvalidated bytes without --i-know-what-this-does")
+		return errors.New("refusing to send unvalidated bytes without --i-know-what-this-does")
 	}
 
 	// Accept "04 00 02", "0400 02" and "040002" alike.

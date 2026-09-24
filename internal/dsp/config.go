@@ -86,16 +86,17 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return fmt.Errorf("failed to write to %s: %w", dir, err)
 	}
-	defer os.Remove(tmp.Name()) // no-op once the rename below succeeds
+	// No-op once the rename below succeeds.
+	defer func() { _ = os.Remove(tmp.Name()) }()
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("failed to write %s: %w", path, err)
 	}
 	// Flush before renaming: otherwise a crash can leave the rename durable and
 	// the contents not, which is the corruption this is meant to prevent.
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("failed to flush %s: %w", path, err)
 	}
 	if err := tmp.Close(); err != nil {

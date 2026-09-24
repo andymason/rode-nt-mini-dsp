@@ -64,7 +64,7 @@ func loadTable(name string) (*[lutEntries]uint32, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var table [lutEntries]uint32
 	n := 0

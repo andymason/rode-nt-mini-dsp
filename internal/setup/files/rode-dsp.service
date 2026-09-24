@@ -2,10 +2,13 @@
 Description=Apply RODE NT-USB Mini DSP settings
 Documentation=https://github.com/andymason/rode-dsp
 
-# @CONFIG@ is replaced by install.sh with the installing user's config file,
-# normally ~/.config/rode-dsp/config.json. Replace it by hand if you are placing
-# this file yourself. It cannot be written as %h: in a system unit that expands
-# to /root, not to the user's home.
+# The two paths below are filled in by "rode-dsp setup": the settings file of
+# whoever ran it, normally ~/.config/rode-dsp/config.json, and wherever the
+# program was installed. Both ship as placeholders, so put real paths in by
+# hand if you are placing this file yourself.
+#
+# The settings path cannot be written as %h. In a system unit that expands to
+# /root, not to the user's home.
 #
 # No config means nothing to restore -- the microphone powers up with its own
 # defaults, which is the right answer. systemd logs this as a skipped unit

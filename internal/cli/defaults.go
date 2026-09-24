@@ -68,5 +68,5 @@ func defaultsCommand(args []string) error {
 
 // init registers the defaults command
 func init() {
-	RegisterCommand("defaults", "Reset all parameters to default values", defaultsCommand)
+	RegisterCommand("defaults", "Reset all values to their defaults", defaultsCommand)
 }

@@ -102,9 +102,9 @@ func permissionHint() string {
 	if runtime.GOOS != "linux" {
 		return ""
 	}
-	return "\n  This is usually a permissions problem. Install the udev rule with:\n" +
-		"    sudo ./packaging/linux/install.sh\n" +
-		"  then unplug the microphone and plug it back in."
+	return "\n  This usually means setup has not run. Run:\n" +
+		"    sudo rode-dsp setup\n" +
+		"  then unplug the microphone and reconnect it."
 }
 
 // Disconnect closes the microphone. It is safe to call when not connected.

@@ -52,12 +52,26 @@ func ParseResponse(raw []byte) (effectID byte, data []byte, err error) {
 	return raw[1], raw[3:], nil
 }
 
-// respInt reads the little-endian int32 at word i of a response data field.
-func respInt(data []byte, i int) (int32, bool) {
+// respWord reads the little-endian 32-bit word at word i of a response data
+// field. The lookup tables are indexed by the device's coefficient as a raw bit
+// pattern, so this is what the table decoders want.
+func respWord(data []byte, i int) (uint32, bool) {
 	if len(data) < 4*(i+1) {
 		return 0, false
 	}
-	return int32(binary.LittleEndian.Uint32(data[4*i:])), true
+	return binary.LittleEndian.Uint32(data[4*i:]), true
+}
+
+// respInt reads the same word as a signed Q31 coefficient, which is how the
+// gate's decoders read it.
+func respInt(data []byte, i int) (int32, bool) {
+	v, ok := respWord(data, i)
+	if !ok {
+		return 0, false
+	}
+	// Reinterprets the same 32 bits rather than converting a magnitude, so
+	// there is nothing here to overflow.
+	return int32(v), true //nolint:gosec // deliberate bit reinterpretation
 }
 
 // tableIndex finds the entry of an ascending or descending lookup table nearest
@@ -93,11 +107,11 @@ func tableIndex(table *[lutEntries]uint32, v uint32) int {
 // DecodeCompThreshold recovers -60.0..0.0 dB. The binary computes
 // (1 - idx/255) * 60 - 60, the inverse of CompThresholdIndex.
 func DecodeCompThreshold(data []byte) (float64, bool) {
-	v, ok := respInt(data, 0)
+	v, ok := respWord(data, 0)
 	if !ok {
 		return 0, false
 	}
-	idx := tableIndex(CompThresholdTable, uint32(v))
+	idx := tableIndex(CompThresholdTable, v)
 	return float64((1.0-float32(idx)/255.0)*60.0 - 60.0), true
 }
 
@@ -112,31 +126,31 @@ func DecodeCompRatio(data []byte) (float64, bool) {
 // DecodeCompAttack recovers 0.1..10.0 ms. The binary reverses the logarithmic
 // index with 0.1 * 100^(idx/255).
 func DecodeCompAttack(data []byte) (float64, bool) {
-	v, ok := respInt(data, 0)
+	v, ok := respWord(data, 0)
 	if !ok {
 		return 0, false
 	}
-	idx := tableIndex(CompAttackTable, uint32(v))
+	idx := tableIndex(CompAttackTable, v)
 	return 0.1 * math.Pow(100.0, float64(idx)/255.0), true
 }
 
 // DecodeCompRelease recovers 5.0..200.0 ms, as attack with base 40.
 func DecodeCompRelease(data []byte) (float64, bool) {
-	v, ok := respInt(data, 0)
+	v, ok := respWord(data, 0)
 	if !ok {
 		return 0, false
 	}
-	idx := tableIndex(CompReleaseTable, uint32(v))
+	idx := tableIndex(CompReleaseTable, v)
 	return 5.0 * math.Pow(40.0, float64(idx)/255.0), true
 }
 
 // DecodeCompGain recovers 0.0..9.0 dB.
 func DecodeCompGain(data []byte) (float64, bool) {
-	v, ok := respInt(data, 0)
+	v, ok := respWord(data, 0)
 	if !ok {
 		return 0, false
 	}
-	idx := tableIndex(CompGainTable, uint32(v))
+	idx := tableIndex(CompGainTable, v)
 	return float64(float32(idx) / 255.0 * 9.0), true
 }
 

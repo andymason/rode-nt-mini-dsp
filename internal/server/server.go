@@ -129,7 +129,7 @@ func (c *Client) send(msg WSMessage) {
 
 	_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-		c.conn.Close()
+		_ = c.conn.Close()
 	}
 }
 
@@ -291,7 +291,7 @@ func (s *Server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	s.add(client)
 	defer func() {
 		s.remove(client)
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	// Most messages are a few dozen bytes; an imported settings document is the
@@ -408,7 +408,7 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 		s.handleResetDefaults(client, byte(*msg.Effect))
 
 	default:
-		s.sendError(client, fmt.Sprintf("Unknown message type: %s", msg.Type))
+		s.sendError(client, "Unknown message type: "+msg.Type)
 	}
 }
 

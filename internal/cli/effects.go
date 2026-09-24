@@ -5,6 +5,7 @@ package cli
 // only requires an entry in dsp.Effects — no new command file is needed.
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -56,7 +57,7 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 			}
 		}
 		if !actionSet {
-			return fmt.Errorf("no parameters specified; use --help for usage")
+			return errors.New("no parameters specified; use --help for usage")
 		}
 
 		ctx := std.context()
@@ -68,7 +69,7 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 
 		// Apply enable / disable.
 		if *enable && *disable {
-			return fmt.Errorf("cannot specify both --enable and --disable")
+			return errors.New("cannot specify both --enable and --disable")
 		}
 		if *enable {
 			ctx.State.SetEnabled(effID, true)
@@ -138,8 +139,8 @@ func makeEffectCommand(cmdName string, effID byte) func([]string) error {
 }
 
 func init() {
-	RegisterCommand("comp", "Configure compressor effect", makeEffectCommand("comp", protocol.EffComp))
-	RegisterCommand("gate", "Configure noise gate effect", makeEffectCommand("gate", protocol.EffGate))
-	RegisterCommand("ae", "Configure aural exciter effect", makeEffectCommand("ae", protocol.EffAE))
-	RegisterCommand("bb", "Configure big bottom effect", makeEffectCommand("bb", protocol.EffBB))
+	RegisterCommand("comp", "Compressor: even out loud and quiet passages", makeEffectCommand("comp", protocol.EffComp))
+	RegisterCommand("gate", "Noise gate: attenuate background sound", makeEffectCommand("gate", protocol.EffGate))
+	RegisterCommand("ae", "Aural exciter: add clarity", makeEffectCommand("ae", protocol.EffAE))
+	RegisterCommand("bb", "Big bottom: add low-end weight", makeEffectCommand("bb", protocol.EffBB))
 }

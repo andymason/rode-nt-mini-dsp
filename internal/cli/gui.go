@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -37,13 +38,13 @@ func guiCommand(args []string) error {
 	}
 
 	if err := ctx.LoadConfig(); err != nil {
-		log.Printf("Warning: Failed to load config: %v", err)
+		log.Printf("Warning: the settings file could not be read: %v", err)
 	}
 
 	// A missing microphone is not a reason to refuse to start: the GUI is still
 	// useful for editing settings, and it picks the device up on reload.
 	if err := ctx.EnsureDeviceConnected(); err != nil {
-		log.Printf("Microphone not connected (%v). The GUI will still open.", err)
+		log.Printf("Microphone not connected (%v). The settings page still opens.", err)
 	}
 
 	srv := server.NewServer(*port, ctx.ConfigPath, ctx.State, ctx.Device)
@@ -55,11 +56,11 @@ func guiCommand(args []string) error {
 		return err
 	}
 	url := fmt.Sprintf("http://%s", ln.Addr())
-	log.Printf("Web GUI at %s — press Ctrl+C to stop", url)
+	log.Printf("Settings page at %s — press Ctrl+C to stop", url)
 
 	serverErr := make(chan error, 1)
 	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
 	}()
@@ -76,7 +77,7 @@ func guiCommand(args []string) error {
 		return fmt.Errorf("server error: %w", err)
 	case <-interrupt:
 		log.Println("Stopping.")
-		ln.Close()
+		_ = ln.Close()
 	}
 
 	return nil
@@ -111,14 +112,14 @@ func openURL(url string) {
 	}
 
 	if cmd == nil {
-		log.Printf("Please open %s in your browser", url)
+		log.Printf("Open %s in a browser", url)
 		return
 	}
 	if err := cmd.Start(); err != nil {
-		log.Printf("Could not open a browser (%v). Please open %s yourself.", err, url)
+		log.Printf("No browser could be opened (%v). Open %s manually.", err, url)
 	}
 }
 
 func init() {
-	RegisterCommand("gui", "Start the web GUI on localhost", guiCommand)
+	RegisterCommand("gui", "Open the settings page in a browser", guiCommand)
 }

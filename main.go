@@ -46,9 +46,16 @@ func main() {
 	}
 }
 
+// versionTag is stamped in by the release workflow with -ldflags. It is empty
+// for an ordinary `go build`, which falls back to the build info below.
+var versionTag string
+
 // version reports the version stamped in by the Go toolchain — a tag for
 // `go install`, otherwise the commit. Nothing to remember to bump by hand.
 func version() string {
+	if versionTag != "" {
+		return versionTag
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "(unknown)"

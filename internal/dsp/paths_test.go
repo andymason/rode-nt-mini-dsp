@@ -14,7 +14,7 @@ func isolate(t *testing.T) (userDir string) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	os.Unsetenv(ConfigEnvVar)
+	_ = os.Unsetenv(ConfigEnvVar)
 
 	switch runtime.GOOS {
 	case "windows":
@@ -75,7 +75,7 @@ func TestConfigPathPrecedence(t *testing.T) {
 	}
 
 	// Unsetting the override falls back to the per-user file.
-	os.Unsetenv(ConfigEnvVar)
+	_ = os.Unsetenv(ConfigEnvVar)
 	if got, err = ConfigPath(""); err != nil {
 		t.Fatal(err)
 	} else if got != filepath.Join(userDir, configFileName) {
@@ -142,7 +142,7 @@ func TestSaveConfigCreatesUserDir(t *testing.T) {
 // rather than having a file written somewhere arbitrary.
 func TestNoHomeDirectoryIsAnError(t *testing.T) {
 	isolate(t)
-	os.Unsetenv(ConfigEnvVar)
+	_ = os.Unsetenv(ConfigEnvVar)
 
 	switch runtime.GOOS {
 	case "windows":
