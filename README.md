@@ -1,6 +1,6 @@
 # rode-dsp
 
-[![CI](https://github.com/andymason/rode-dsp/actions/workflows/ci.yml/badge.svg)](https://github.com/andymason/rode-dsp/actions/workflows/ci.yml)
+[![CI](https://github.com/andymason/rode-nt-mini-dsp/actions/workflows/ci.yml/badge.svg)](https://github.com/andymason/rode-nt-mini-dsp/actions/workflows/ci.yml)
 
 Controls the RØDE NT-USB Mini's built-in sound processing, on Linux and Windows.
 
@@ -33,7 +33,7 @@ testing were done, and then refined for Linux.
 ### Linux
 
 Download `rode-dsp-linux-amd64` from the [latest
-release](https://github.com/andymason/rode-dsp/releases/latest), or
+release](https://github.com/andymason/rode-nt-mini-dsp/releases/latest), or
 `rode-dsp-linux-arm64` for an ARM machine such as a Raspberry Pi. Then, in the
 download folder:
 
@@ -52,7 +52,7 @@ To remove: `sudo rode-dsp setup --remove`. Saved settings are kept; delete
 ### Windows
 
 Download `rode-dsp-windows-amd64.exe` from the [latest
-release](https://github.com/andymason/rode-dsp/releases/latest). Then, in a
+release](https://github.com/andymason/rode-nt-mini-dsp/releases/latest). Then, in a
 terminal in the download folder:
 
 ```

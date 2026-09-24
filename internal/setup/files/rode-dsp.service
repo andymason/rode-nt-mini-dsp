@@ -1,6 +1,6 @@
 [Unit]
 Description=Apply RODE NT-USB Mini DSP settings
-Documentation=https://github.com/andymason/rode-dsp
+Documentation=https://github.com/andymason/rode-nt-mini-dsp
 
 # The two paths below are filled in by "rode-dsp setup": the settings file of
 # whoever ran it, normally ~/.config/rode-dsp/config.json, and wherever the
